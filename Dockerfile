@@ -19,10 +19,15 @@ RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -
 
 ENV PATH=/opt/conda/bin:$PATH
 
-WORKDIR /workspace
-COPY . /workspace/sam-3d-objects/
 WORKDIR /workspace/sam-3d-objects
 
+# Copy ONLY environment files first (for caching)
+COPY environments/ environments/
+COPY pyproject.toml requirements*.txt ./
+COPY patching/ patching/
+COPY setup.py* ./
+
+# Create conda env (cached if environment files unchanged)
 RUN conda config --set remote_read_timeout_secs 600 && \
     conda config --set remote_connect_timeout_secs 120 && \
     conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
@@ -34,6 +39,11 @@ ENV PIP_EXTRA_INDEX_URL="https://pypi.ngc.nvidia.com https://download.pytorch.or
 ENV PIP_FIND_LINKS="https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.5.1_cu121.html"
 ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
 
+# Copy source code for pip install
+COPY sam3d_objects/ sam3d_objects/
+COPY notebook/ notebook/
+
+# Install dependencies (cached if requirements unchanged)
 RUN /opt/conda/envs/sam3d-objects/bin/pip install --no-cache-dir 'huggingface-hub[cli]<1.0' && \
     /opt/conda/envs/sam3d-objects/bin/pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu121 -e '.[dev]' && \
     /opt/conda/envs/sam3d-objects/bin/pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu121 -e '.[p3d]'
@@ -42,7 +52,15 @@ RUN /opt/conda/envs/sam3d-objects/bin/pip install --no-cache-dir --extra-index-u
 
 RUN if [ -f patching/hydra ]; then /opt/conda/envs/sam3d-objects/bin/python patching/hydra; fi
 
-RUN /opt/conda/envs/sam3d-objects/bin/pip install --no-cache-dir flask flask-cors requests gunicorn
+# Install API dependencies + rembg for auto-segmentation
+RUN /opt/conda/envs/sam3d-objects/bin/pip install --no-cache-dir flask flask-cors requests gunicorn rembg
+
+# Copy remaining files (api_server.py, checkpoints, etc.) - changes here don't affect above layers
+COPY api_server.py demo.py ./
+COPY checkpoints/ checkpoints/
+COPY scripts/ scripts/
+COPY client/ client/
+COPY doc/ doc/
 
 RUN echo '#!/bin/bash\n\
 set -e\n\

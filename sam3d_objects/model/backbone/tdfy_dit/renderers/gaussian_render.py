@@ -69,7 +69,7 @@ def render(
     bg_color: torch.Tensor,
     scaling_modifier=1.0,
     override_color=None,
-    backend="inria",
+    backend="gsplat",
 ):
     """
     Render the scene.
@@ -230,7 +230,7 @@ class GaussianRenderer:
                 "far": None,
                 "ssaa": 1,
                 "bg_color": "random",
-                "backend": "inria",
+                "backend": "gsplat",
             }
         )
         self.rendering_options.update(rendering_options)

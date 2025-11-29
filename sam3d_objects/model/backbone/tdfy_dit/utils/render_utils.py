@@ -74,7 +74,7 @@ def render_frames(
         renderer.rendering_options.far = options.get("far", 1.6)
         renderer.rendering_options.bg_color = options.get("bg_color", (0, 0, 0))
         renderer.rendering_options.ssaa = options.get("ssaa", 1)
-        renderer.rendering_options.backend = options.get("backend", "inria")
+        renderer.rendering_options.backend = options.get("backend", "gsplat")
         renderer.pipe.kernel_size = kwargs.get("kernel_size", 0.1)
         renderer.pipe.use_mip_gaussian = True
     elif isinstance(sample, MeshExtractResult):
@@ -178,7 +178,7 @@ def render_video(
     )
 
 
-def render_multiview(sample, resolution=512, nviews=30):
+def render_multiview(sample, resolution=512, nviews=30, backend="gsplat"):
     r = 2
     fov = 40
     cams = [sphere_hammersley_sequence(i, nviews) for i in range(nviews)]
@@ -191,7 +191,7 @@ def render_multiview(sample, resolution=512, nviews=30):
         sample,
         extrinsics,
         intrinsics,
-        {"resolution": resolution, "bg_color": (0, 0, 0)},
+        {"resolution": resolution, "bg_color": (0, 0, 0), "backend": backend},
     )
     return res["color"], extrinsics, intrinsics
 
