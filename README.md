@@ -1,18 +1,55 @@
-# SAM 3D
+# SAM 3D Objects - Docker API Fork
 
-SAM 3D Objects is one part of SAM 3D, a pair of models for object and human mesh reconstruction.  If you’re looking for SAM 3D Body, [click here](https://github.com/facebookresearch/sam-3d-body).
+> **This is a deployment-ready fork of [SAM-3D-Objects](https://github.com/facebookresearch/sam-3d-objects) with Docker + API integration for RunPod deployment.**
 
-# SAM 3D Objects
+## 🚀 Quick Start
+
+```bash
+# 1. Set your HuggingFace token
+export HF_TOKEN=your-token-here
+
+# 2. Download checkpoints (optional but recommended)
+./scripts/download_checkpoints.sh
+
+# 3. Build Docker image
+./scripts/build.sh
+
+# 4. Run locally
+docker-compose up
+
+# 5. Test API
+python scripts/test_api.py --url http://localhost:8000 --image your-image.png
+```
+
+## 📦 What This Fork Adds
+
+- **Docker container** ready for RunPod/cloud GPU deployment
+- **REST API** for 3D mesh generation from images
+- **GLB output** with baked textures (optimized for web)
+- **Simple pipeline** for build → push → deploy workflow
+
+## 🔗 API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/generate` | POST | Generate GLB mesh (base64 response) |
+| `/generate-file` | POST | Generate GLB mesh (file download) |
+| `/generate-ply` | POST | Generate Gaussian Splat PLY |
+
+See [RUNPOD_DEPLOYMENT.md](RUNPOD_DEPLOYMENT.md) for full API documentation.
+
+---
+
+# Original SAM 3D Objects
 
 **SAM 3D Team**, [Xingyu Chen](https://scholar.google.com/citations?user=gjSHr6YAAAAJ&hl=en&oi=sra)\*, [Fu-Jen Chu](https://fujenchu.github.io/)\*, [Pierre Gleize](https://scholar.google.com/citations?user=4imOcw4AAAAJ&hl=en&oi=ao)\*, [Kevin J Liang](https://kevinjliang.github.io/)\*, [Alexander Sax](https://alexsax.github.io/)\*, [Hao Tang](https://scholar.google.com/citations?user=XY6Nh9YAAAAJ&hl=en&oi=sra)\*, [Weiyao Wang](https://sites.google.com/view/weiyaowang/home)\*, [Michelle Guo](https://scholar.google.com/citations?user=lyjjpNMAAAAJ&hl=en&oi=ao), [Thibaut Hardin](https://github.com/Thibaut-H), [Xiang Li](https://ryanxli.github.io/)⚬, [Aohan Lin](https://github.com/linaohan), [Jia-Wei Liu](https://jia-wei-liu.github.io/), [Ziqi Ma](https://ziqi-ma.github.io/)⚬, [Anushka Sagar](https://www.linkedin.com/in/anushkasagar/), [Bowen Song](https://scholar.google.com/citations?user=QQKVkfcAAAAJ&hl=en&oi=sra)⚬, [Xiaodong Wang](https://scholar.google.com/citations?authuser=2&user=rMpcFYgAAAAJ), [Jianing Yang](https://jedyang.com/)⚬, [Bowen Zhang](http://home.ustc.edu.cn/~zhangbowen/)⚬, [Piotr Dollár](https://pdollar.github.io/)†, [Georgia Gkioxari](https://georgiagkioxari.com/)†, [Matt Feiszli](https://scholar.google.com/citations?user=A-wA73gAAAAJ&hl=en&oi=ao)†§, [Jitendra Malik](https://people.eecs.berkeley.edu/~malik/)†§
 
 ***Meta Superintelligence Labs***
 
-*Core contributor (Alphabetical, Equal Contribution), ⚬Intern, †Project leads, §Equal Contribution
-
 [[`Paper`](https://ai.meta.com/research/publications/sam-3d-3dfy-anything-in-images/)] [[`Code`](https://github.com/facebookresearch/sam-3d-objects)] [[`Website`](https://ai.meta.com/sam3d/)] [[`Demo`](https://www.aidemos.meta.com/segment-anything/editor/convert-image-to-3d)] [[`Blog`](https://ai.meta.com/blog/sam-3d/)] [[`BibTeX`](#citing-sam-3d-objects)]
 
-**SAM 3D Objects** is a foundation model that reconstructs full 3D shape geometry, texture, and layout from a single image, excelling in real-world scenarios with occlusion and clutter by using progressive training and a data engine with human feedback. It outperforms prior 3D generation models in human preference tests on real-world objects and scenes. We released code, weights, online demo, and a new challenging benchmark.
+**SAM 3D Objects** is a foundation model that reconstructs full 3D shape geometry, texture, and layout from a single image, excelling in real-world scenarios with occlusion and clutter by using progressive training and a data engine with human feedback.
 
 
 <p align="center"><img src="doc/intro.png"/></p>
