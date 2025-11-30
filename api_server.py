@@ -209,42 +209,43 @@ def run_generation(job: Job):
             stage1_steps = inference_steps
             stage2_steps = inference_steps
             
+            # IMPORTANT: Set with_mesh_postprocess=False and with_texture_baking=False
+            # to skip the pipeline's default postprocessing. We do our own with custom quality params.
             output = inference._pipeline.run(
                 img_array, None, seed,
                 stage1_only=False,
-                with_mesh_postprocess=True,
-                with_texture_baking=with_texture,
+                with_mesh_postprocess=False,  # Skip - we do our own
+                with_texture_baking=False,     # Skip - we do our own
                 with_layout_postprocess=True,
-                use_vertex_color=not with_texture,
+                use_vertex_color=False,
                 stage1_inference_steps=stage1_steps,
                 stage2_inference_steps=stage2_steps
             )
             
-            # Override postprocessing with quality parameters
-            if "mesh" in output and "gaussian" in output:
-                from sam3d_objects.model.backbone.tdfy_dit.utils import postprocessing_utils
-                
-                # Set render quality parameters (pass through to render_multiview)
-                # Use texture_size for render resolution (capped at 2048 for performance)
-                render_resolution = min(texture_size, 2048)
-                postprocessing_utils.to_glb._render_resolution = render_resolution
-                postprocessing_utils.to_glb._render_nviews = nviews
-                logger.info(f"[{job.id}] Quality: texture_size={texture_size}, render_res={render_resolution}, nviews={nviews}, simplify={simplify}, inference_steps={inference_steps}")
-                
-                glb = postprocessing_utils.to_glb(
-                    output["gaussian"][0],
-                    output["mesh"][0],
-                    simplify=simplify,
-                    texture_size=texture_size,
-                    verbose=True,
-                    with_mesh_postprocess=True,
-                    with_texture_baking=with_texture,
-                    use_vertex_color=not with_texture,
-                    rendering_engine=inference._pipeline.rendering_engine,
-                )
-                output["glb"] = glb
+            # Do postprocessing with our custom quality parameters
+            if "mesh" not in output or "gaussian" not in output:
+                raise ValueError("Pipeline did not produce mesh or gaussian output")
             
-            glb = output.get("glb")
+            from sam3d_objects.model.backbone.tdfy_dit.utils import postprocessing_utils
+            
+            logger.info(f"[{job.id}] Quality: texture_size={texture_size}, nviews={nviews}, simplify={simplify}, inference_steps={inference_steps}")
+            
+            # Set render quality parameters
+            postprocessing_utils.to_glb._render_resolution = min(texture_size, 2048)
+            postprocessing_utils.to_glb._render_nviews = nviews
+            
+            glb = postprocessing_utils.to_glb(
+                output["gaussian"][0],
+                output["mesh"][0],
+                simplify=simplify,
+                texture_size=texture_size,
+                verbose=True,
+                with_mesh_postprocess=True,
+                with_texture_baking=with_texture,
+                use_vertex_color=not with_texture,
+                rendering_engine=inference._pipeline.rendering_engine,
+            )
+            
             if glb is None:
                 raise ValueError("No mesh generated")
             
