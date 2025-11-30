@@ -247,40 +247,34 @@ fi
 
 ### 2.5.6 Run API Server
 
-**Run in background (Recommended - prevents crashes):**
+**Run in background (Recommended):**
 
 ```bash
-# Make sure you're in the repo directory
-cd /workspace/sam-3d-objects
+# Force kill everything on port 8000
+pkill -9 -f gunicorn
+sleep 2
+fuser -k 8000/tcp 2>/dev/null
+sleep 1
 
-# Source conda.sh and activate environment
+# Start server
+cd /workspace/sam-3d-objects
 CONDA_PATH=$(conda info --base)
 source $CONDA_PATH/etc/profile.d/conda.sh
 conda activate sam3d-objects
 
-# Kill any existing gunicorn processes
-pkill -f gunicorn || true
+nohup gunicorn --bind 0.0.0.0:8000 --workers 1 --threads 2 --timeout 600 --preload api_server:app > /tmp/api_server.log 2>&1 &
 
-# Start in background WITHOUT max-requests (prevents crashes during job processing)
-# The worker monitor thread handles worker crashes instead
-nohup gunicorn --bind 0.0.0.0:8000 \
-    --workers 1 \
-    --threads 2 \
-    --timeout 600 \
-    --preload \
-    --log-level info \
-    --access-logfile /tmp/gunicorn_access.log \
-    --error-logfile /tmp/gunicorn_error.log \
-    api_server:app > /tmp/api_server.log 2>&1 &
-
-# Check it's running
-ps aux | grep gunicorn
-
-# Monitor logs
+sleep 2
 tail -f /tmp/api_server.log
 ```
 
-**Run in foreground (for testing):**
+**Quick restart (copy-paste this entire block):**
+
+```bash
+pkill -9 -f gunicorn; sleep 2; fuser -k 8000/tcp 2>/dev/null; sleep 1; cd /workspace/sam-3d-objects && CONDA_PATH=$(conda info --base) && source $CONDA_PATH/etc/profile.d/conda.sh && conda activate sam3d-objects && nohup gunicorn --bind 0.0.0.0:8000 --workers 1 --threads 2 --timeout 600 --preload api_server:app > /tmp/api_server.log 2>&1 & sleep 2 && tail -f /tmp/api_server.log
+```
+
+**Run in foreground (for debugging):**
 
 ```bash
 cd /workspace/sam-3d-objects
@@ -288,15 +282,15 @@ CONDA_PATH=$(conda info --base)
 source $CONDA_PATH/etc/profile.d/conda.sh
 conda activate sam3d-objects
 
-# Set environment variables
-export CUDA_HOME=/usr/local/cuda
-export LIDRA_SKIP_INIT=true
-
-# Run the server
-gunicorn --bind 0.0.0.0:8000 --workers 1 --threads 2 --timeout 300 api_server:app
+gunicorn --bind 0.0.0.0:8000 --workers 1 --threads 2 --timeout 600 api_server:app
 ```
 
-**Note:** We removed `--max-requests` because it causes crashes when Gunicorn restarts the worker while a background job is processing. The worker monitor thread handles worker crashes instead.
+**Architecture Notes:**
+- API uses async queue system with separate worker thread
+- API calls return immediately with job ID (non-blocking)
+- Processing happens in background worker thread
+- Worker thread starts lazily (survives gunicorn fork with `--preload`)
+- Don't use `--max-requests` (causes crashes during job processing)
 
 **Status Tracking:**
 - ✅ Repository cloned
@@ -658,23 +652,11 @@ Pod isn't ready yet. Check RunPod logs.
 
 ### Job Stuck in Queue (processing: 0, queued: 1)
 
-**Problem:** Job is queued but not processing - worker thread may have crashed.
+**Problem:** Job is queued but not processing, or server crashed.
 
-**Solution:** Restart the server:
+**Solution:** Full restart:
 ```bash
-# On pod
-pkill -f gunicorn
-cd /workspace/sam-3d-objects
-CONDA_PATH=$(conda info --base)
-source $CONDA_PATH/etc/profile.d/conda.sh
-conda activate sam3d-objects
-
-nohup gunicorn --bind 0.0.0.0:8000 \
-    --workers 1 \
-    --threads 2 \
-    --timeout 600 \
-    --preload \
-    api_server:app > /tmp/api_server.log 2>&1 &
+pkill -9 -f gunicorn; sleep 2; fuser -k 8000/tcp 2>/dev/null; sleep 1; cd /workspace/sam-3d-objects && CONDA_PATH=$(conda info --base) && source $CONDA_PATH/etc/profile.d/conda.sh && conda activate sam3d-objects && nohup gunicorn --bind 0.0.0.0:8000 --workers 1 --threads 2 --timeout 600 --preload api_server:app > /tmp/api_server.log 2>&1 & sleep 2 && tail -f /tmp/api_server.log
 ```
 
 The stuck job will be lost, but you can resubmit. The worker monitor thread will auto-restart the worker if it crashes again.
@@ -683,22 +665,7 @@ The stuck job will be lost, but you can resubmit. The worker monitor thread will
 
 **Problem:** Server crashes after completing a generation job.
 
-**Solution:** Remove `--max-requests` flag (it causes crashes during job processing):
-
-```bash
-# Kill old server
-pkill -f gunicorn
-
-# Restart WITHOUT max-requests (prevents crashes when checking /queue during processing)
-nohup gunicorn --bind 0.0.0.0:8000 \
-    --workers 1 \
-    --threads 2 \
-    --timeout 600 \
-    --preload \
-    api_server:app > /tmp/api_server.log 2>&1 &
-```
-
-The worker monitor thread automatically restarts the worker if it crashes. The `--max-requests` flag was causing Gunicorn to restart the worker while background jobs were still processing, leading to crashes.
+**Solution:** This is usually a memory issue. The API clears CUDA cache after each job, but if it still crashes, restart with the command above. Don't use `--max-requests` (causes crashes during job processing).
 
 **Note:** Generated files are stored in `/tmp` and automatically cleaned up after 1 hour. Download your results promptly after job completion.
 

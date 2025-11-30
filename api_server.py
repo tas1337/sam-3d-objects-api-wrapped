@@ -175,19 +175,18 @@ def run_generation(job: Job):
         output_format = data.get('output_format', 'glb')
         with_texture = data.get('with_texture', True)
         
-        # Quality parameters - different defaults based on whether texture baking is enabled
-        # With texture: need to fit texture baking in GPU memory after model
-        # Without texture: can use more GPU memory for better mesh quality
+        # Quality parameters - HIGH QUALITY defaults for 80GB+ GPU
+        # For smaller GPUs (48GB), reduce these values to avoid OOM
         if with_texture:
-            texture_size = data.get('texture_size', 1024)  # Lower for memory
-            simplify = data.get('simplify', 0.5)  # 50% to fit in xatlas ~150k faces
-            inference_steps = data.get('inference_steps', 25)  # Lower for memory
-            nviews = data.get('nviews', 100)  # Lower for memory
+            texture_size = data.get('texture_size', 2048)  # Texture resolution (1024, 2048, 4096)
+            simplify = data.get('simplify', 0.3)  # Keep 70% faces (0.0=none, 0.5=50%, must stay under ~150k for xatlas)
+            inference_steps = data.get('inference_steps', 50)  # Diffusion steps (25=fast, 50=high, 100=ultra)
+            nviews = data.get('nviews', 200)  # Texture baking views (100=fast, 200=high, 300=ultra)
         else:
-            texture_size = data.get('texture_size', 1024)  # Not used when no texture
+            texture_size = data.get('texture_size', 2048)  # Not used when no texture
             simplify = data.get('simplify', 0.0)  # No simplify - keep full detail with vertex colors
             inference_steps = data.get('inference_steps', 50)  # Higher quality mesh
-            nviews = data.get('nviews', 100)  # Not used when no texture
+            nviews = data.get('nviews', 200)  # Not used when no texture
         remove_invisible_faces = data.get('remove_invisible_faces', True)  # Remove faces not visible from any angle. False = keep all faces (more detail but larger file)
         fill_holes_resolution = data.get('fill_holes_resolution', 2048)  # Higher = better hole detection (1024, 2048, 4096). Default: 2048
         fill_holes_num_views = data.get('fill_holes_num_views', 2000)  # More views = better hole detection (1000, 2000, 3000). Default: 2000
