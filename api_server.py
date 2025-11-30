@@ -175,11 +175,19 @@ def run_generation(job: Job):
         output_format = data.get('output_format', 'glb')
         with_texture = data.get('with_texture', True)
         
-        # Quality parameters (defaults set to HIGH quality - stable)
-        texture_size = data.get('texture_size', 1024)  # Higher = better texture (1024, 2048). Default: 1024 (fits in memory with 44GB model)
-        simplify = data.get('simplify', 0.5)  # Mesh simplification (0.5 = max for xatlas stability ~150k faces, 0.7 = safer). xatlas crashes above ~150k faces. Default: 0.5
-        inference_steps = data.get('inference_steps', 25)  # More steps = better quality (25 = default, 50 = high). Default: 25 (standard, uses less memory)
-        nviews = data.get('nviews', 100)  # More views = better texture (100 = default). Default: 100 (fits in memory with 44GB model)
+        # Quality parameters - different defaults based on whether texture baking is enabled
+        # With texture: need to fit texture baking in GPU memory after model
+        # Without texture: can use more GPU memory for better mesh quality
+        if with_texture:
+            texture_size = data.get('texture_size', 1024)  # Lower for memory
+            simplify = data.get('simplify', 0.5)  # 50% to fit in xatlas ~150k faces
+            inference_steps = data.get('inference_steps', 25)  # Lower for memory
+            nviews = data.get('nviews', 100)  # Lower for memory
+        else:
+            texture_size = data.get('texture_size', 1024)  # Not used when no texture
+            simplify = data.get('simplify', 0.0)  # No simplify - keep full detail with vertex colors
+            inference_steps = data.get('inference_steps', 50)  # Higher quality mesh
+            nviews = data.get('nviews', 100)  # Not used when no texture
         remove_invisible_faces = data.get('remove_invisible_faces', True)  # Remove faces not visible from any angle. False = keep all faces (more detail but larger file)
         fill_holes_resolution = data.get('fill_holes_resolution', 2048)  # Higher = better hole detection (1024, 2048, 4096). Default: 2048
         fill_holes_num_views = data.get('fill_holes_num_views', 2000)  # More views = better hole detection (1000, 2000, 3000). Default: 2000
@@ -242,13 +250,17 @@ def run_generation(job: Job):
             postprocessing_utils.to_glb._render_resolution = min(texture_size, 2048)
             postprocessing_utils.to_glb._render_nviews = nviews
             
+            # If no texture baking, skip mesh postprocessing to preserve vertex colors
+            # (postprocessing changes vertex order, breaking vertex color mapping)
+            do_mesh_postprocess = with_texture  # Only postprocess if we're doing texture baking
+            
             glb = postprocessing_utils.to_glb(
                 output["gaussian"][0],
                 output["mesh"][0],
-                simplify=simplify,
+                simplify=simplify if do_mesh_postprocess else 0.0,  # No simplify if using vertex colors
                 texture_size=texture_size,
                 verbose=True,
-                with_mesh_postprocess=True,
+                with_mesh_postprocess=do_mesh_postprocess,
                 with_texture_baking=with_texture,
                 use_vertex_color=not with_texture,
                 rendering_engine=inference._pipeline.rendering_engine,
