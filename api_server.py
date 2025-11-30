@@ -218,11 +218,19 @@ def run_generation(job: Job):
         job.completed_at = time.time()
         logger.info(f"[{job.id}] Completed in {job.completed_at - job.started_at:.1f}s")
         
+        # Force garbage collection to free memory
+        import gc
+        gc.collect()
+        
     except Exception as e:
         job.status = 'failed'
         job.error = str(e)
         job.completed_at = time.time()
         logger.error(f"[{job.id}] Failed: {e}", exc_info=True)
+        
+        # Force garbage collection even on error
+        import gc
+        gc.collect()
 
 def worker():
     """Worker thread that processes jobs one at a time"""
@@ -245,10 +253,15 @@ def worker():
             logger.info(f"[{job_id}] Processing started")
             run_generation(job)
             
+            # Clear current_job before task_done to prevent deadlock
             with jobs_lock:
                 current_job = None
             
+            # Mark task as done (this can block if queue is full)
             job_queue.task_done()
+            
+            # Log completion for debugging
+            logger.info(f"[{job_id}] Worker finished processing, waiting for next job")
         except Exception as e:
             logger.error(f"Worker thread error: {e}", exc_info=True)
             with jobs_lock:
@@ -286,21 +299,37 @@ worker_monitor_thread.start()
 
 @app.route('/health', methods=['GET'])
 def health():
-    import torch
-    gpu_info = {}
-    if torch.cuda.is_available():
-        gpu_info = {
-            'name': torch.cuda.get_device_name(0),
-            'vram_gb': round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 1)
-        }
-    return jsonify({
-        'status': 'healthy',
-        'model_loaded': inference is not None,
-        'cuda': torch.cuda.is_available(),
-        'gpu': gpu_info,
-        'queue': get_queue_stats(),
-        'worker_alive': worker_thread.is_alive() if 'worker_thread' in globals() else False
-    })
+    """Health check endpoint - must be fast and non-blocking"""
+    try:
+        import torch
+        gpu_info = {}
+        if torch.cuda.is_available():
+            try:
+                gpu_info = {
+                    'name': torch.cuda.get_device_name(0),
+                    'vram_gb': round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 1)
+                }
+            except:
+                gpu_info = {'name': 'Unknown', 'vram_gb': 0}
+        
+        worker_alive = False
+        if 'worker_thread' in globals():
+            try:
+                worker_alive = worker_thread.is_alive()
+            except:
+                pass
+        
+        return jsonify({
+            'status': 'healthy',
+            'model_loaded': inference is not None,
+            'cuda': torch.cuda.is_available(),
+            'gpu': gpu_info,
+            'queue': get_queue_stats(),
+            'worker_alive': worker_alive
+        })
+    except Exception as e:
+        logger.error(f"Health check error: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'error': str(e)}), 500
 
 @app.route('/queue', methods=['GET'])
 def queue_status():
