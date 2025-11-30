@@ -15,6 +15,7 @@ from collections import OrderedDict
 
 os.environ["CUDA_HOME"] = os.environ.get("CUDA_HOME", "/usr/local/cuda")
 os.environ["LIDRA_SKIP_INIT"] = "true"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # Reduce memory fragmentation
 
 sys.path.append("notebook")
 
@@ -175,10 +176,10 @@ def run_generation(job: Job):
         with_texture = data.get('with_texture', True)
         
         # Quality parameters (defaults set to HIGH quality - stable)
-        texture_size = data.get('texture_size', 2048)  # Higher = better texture (1024, 2048, 4096). Default: 2048 (balanced quality vs memory)
+        texture_size = data.get('texture_size', 1024)  # Higher = better texture (1024, 2048). Default: 1024 (fits in memory with 44GB model)
         simplify = data.get('simplify', 0.5)  # Mesh simplification (0.5 = max for xatlas stability ~150k faces, 0.7 = safer). xatlas crashes above ~150k faces. Default: 0.5
-        inference_steps = data.get('inference_steps', 50)  # More steps = better quality (25 = fast, 50 = high, 100 = ultra). Default: 50 (high quality, stable)
-        nviews = data.get('nviews', 200)  # More views = better texture (100 = default, 200 = high). Default: 200 (balanced quality vs memory)
+        inference_steps = data.get('inference_steps', 25)  # More steps = better quality (25 = default, 50 = high). Default: 25 (standard, uses less memory)
+        nviews = data.get('nviews', 100)  # More views = better texture (100 = default). Default: 100 (fits in memory with 44GB model)
         remove_invisible_faces = data.get('remove_invisible_faces', True)  # Remove faces not visible from any angle. False = keep all faces (more detail but larger file)
         fill_holes_resolution = data.get('fill_holes_resolution', 2048)  # Higher = better hole detection (1024, 2048, 4096). Default: 2048
         fill_holes_num_views = data.get('fill_holes_num_views', 2000)  # More views = better hole detection (1000, 2000, 3000). Default: 2000
