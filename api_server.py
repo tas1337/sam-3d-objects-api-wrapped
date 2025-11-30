@@ -176,9 +176,9 @@ def run_generation(job: Job):
         
         # Quality parameters (defaults set to HIGH quality - stable)
         texture_size = data.get('texture_size', 2048)  # Higher = better texture quality (1024, 2048, 4096). Default: 2048 (high quality, stable)
-        simplify = data.get('simplify', 0.5)  # Mesh simplification ratio (0.0 = no simplify but may crash, 0.5 = balanced, 0.95 = aggressive). Default: 0.5 (stable)
+        simplify = data.get('simplify', 0.2)  # Mesh simplification ratio (0.0 = no simplify but may crash, 0.2 = high detail, 0.5 = balanced, 0.95 = aggressive). Default: 0.2 (high detail, stable)
         inference_steps = data.get('inference_steps', 50)  # More steps = better quality (25 = fast, 50 = high, 100 = ultra). Default: 50 (high quality, stable)
-        nviews = data.get('nviews', 200)  # More views = better texture (100 = default, 200 = high, 300 = ultra). Default: 200 (high quality, stable)
+        nviews = data.get('nviews', 250)  # More views = better texture (100 = default, 200 = high, 250 = very high, 300 = ultra). Default: 250 (very high quality)
         remove_invisible_faces = data.get('remove_invisible_faces', True)  # Remove faces not visible from any angle. False = keep all faces (more detail but larger file)
         fill_holes_resolution = data.get('fill_holes_resolution', 2048)  # Higher = better hole detection (1024, 2048, 4096). Default: 2048
         fill_holes_num_views = data.get('fill_holes_num_views', 2000)  # More views = better hole detection (1000, 2000, 3000). Default: 2000
