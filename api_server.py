@@ -192,6 +192,7 @@ def run_generation(job: Job):
                 raise ValueError("No gaussian splat generated")
             
             tmp = tempfile.NamedTemporaryFile(suffix='.ply', delete=False)
+            tmp.close()  # Close file handle before saving
             gs.save_ply(tmp.name)
             job.result = {'file': tmp.name, 'format': 'ply'}
         else:
@@ -209,6 +210,7 @@ def run_generation(job: Job):
                 raise ValueError("No mesh generated")
             
             tmp = tempfile.NamedTemporaryFile(suffix='.glb', delete=False)
+            tmp.close()  # Close file handle before exporting
             glb.export(tmp.name)
             job.result = {'file': tmp.name, 'format': 'glb'}
         
@@ -228,24 +230,36 @@ def worker():
     logger.info("Queue worker started")
     
     while True:
-        job_id = job_queue.get()
-        
-        with jobs_lock:
-            if job_id not in jobs:
+        try:
+            job_id = job_queue.get()
+            
+            with jobs_lock:
+                if job_id not in jobs:
+                    job_queue.task_done()
+                    continue
+                job = jobs[job_id]
+                job.status = 'processing'
+                job.started_at = time.time()
+                current_job = job_id
+            
+            logger.info(f"[{job_id}] Processing started")
+            run_generation(job)
+            
+            with jobs_lock:
+                current_job = None
+            
+            job_queue.task_done()
+        except Exception as e:
+            logger.error(f"Worker thread error: {e}", exc_info=True)
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id].status = 'failed'
+                    jobs[job_id].error = f"Worker error: {str(e)}"
+                current_job = None
+            try:
                 job_queue.task_done()
-                continue
-            job = jobs[job_id]
-            job.status = 'processing'
-            job.started_at = time.time()
-            current_job = job_id
-        
-        logger.info(f"[{job_id}] Processing started")
-        run_generation(job)
-        
-        with jobs_lock:
-            current_job = None
-        
-        job_queue.task_done()
+            except:
+                pass
 
 # Start worker thread
 worker_thread = threading.Thread(target=worker, daemon=True)
@@ -309,31 +323,44 @@ def job_status(job_id):
 @app.route('/job/<job_id>/download', methods=['GET'])
 def job_download(job_id):
     """Download completed job result"""
-    with jobs_lock:
-        if job_id not in jobs:
-            return jsonify({'error': 'Job not found'}), 404
+    try:
+        with jobs_lock:
+            if job_id not in jobs:
+                return jsonify({'error': 'Job not found'}), 404
+            
+            job = jobs[job_id]
+            
+            if job.status != 'completed':
+                return jsonify({'error': f'Job not ready, status: {job.status}'}), 400
+            
+            if not job.result or 'file' not in job.result:
+                return jsonify({'error': 'Job result file not found'}), 404
+            
+            result = job.result
+            file_path = result['file']
         
-        job = jobs[job_id]
+        # Verify file exists before sending
+        if not os.path.exists(file_path):
+            logger.error(f"[{job_id}] File not found: {file_path}")
+            return jsonify({'error': 'Result file no longer exists'}), 404
         
-        if job.status != 'completed':
-            return jsonify({'error': f'Job not ready, status: {job.status}'}), 400
-        
-        result = job.result
-    
-    if result['format'] == 'ply':
-        return send_file(
-            result['file'],
-            as_attachment=True,
-            download_name='model.ply',
-            mimetype='application/octet-stream'
-        )
-    else:
-        return send_file(
-            result['file'],
-            as_attachment=True,
-            download_name='model.glb',
-            mimetype='model/gltf-binary'
-        )
+        if result['format'] == 'ply':
+            return send_file(
+                file_path,
+                as_attachment=True,
+                download_name='model.ply',
+                mimetype='application/octet-stream'
+            )
+        else:
+            return send_file(
+                file_path,
+                as_attachment=True,
+                download_name='model.glb',
+                mimetype='model/gltf-binary'
+            )
+    except Exception as e:
+        logger.error(f"[{job_id}] Download failed: {e}", exc_info=True)
+        return jsonify({'error': f'Download failed: {str(e)}'}), 500
 
 @app.route('/generate', methods=['POST'])
 def generate():

@@ -2,6 +2,54 @@
 
 Deploy SAM-3D as a Docker container on RunPod (or any GPU server).
 
+## 📋 Setup Progress Checklist
+
+**For Manual RunPod Setup:**
+- [ ] Step 0: Clone repository
+- [ ] Step 1.2: Download HuggingFace checkpoints
+- [ ] Step 2.5.1: Install system dependencies
+- [ ] Step 2.5.2: Install Miniconda
+- [ ] Step 2.5.3: Create conda environment
+- [ ] Step 2.5.4: Install Python dependencies
+- [ ] Step 2.5.5: Verify checkpoints location
+- [ ] Step 2.5.6: Run API server
+
+**For Docker Setup:**
+- [ ] Step 0: Clone repository
+- [ ] Step 1.1: Get HuggingFace token
+- [ ] Step 1.2: Download checkpoints
+- [ ] Step 1.3: Build Docker image
+- [ ] Step 2: Push to Docker Hub
+- [ ] Step 3: Deploy on RunPod
+
+---
+
+## Step 0: Clone Repository
+
+**To clone the repo (first time):**
+```bash
+git clone https://<YOUR_TOKEN>@github.com/tas1337/sam-3d-objects.git
+```
+
+**Or using oauth2 format:**
+```bash
+git clone https://oauth2:<YOUR_TOKEN>@github.com/tas1337/sam-3d-objects.git
+```
+
+**To pull updates (if already cloned):**
+```bash
+cd sam-3d-objects
+git pull
+```
+
+**If pull asks for credentials, update the remote URL:**
+```bash
+git remote set-url origin https://<YOUR_TOKEN>@github.com/tas1337/sam-3d-objects.git
+git pull
+```
+
+Replace `<YOUR_TOKEN>` with your personal access token.
+
 ## Requirements
 
 - **GPU**: 24GB+ VRAM (A100, L40S, A40, RTX 4090)
@@ -73,6 +121,181 @@ docker tag sam3d-objects:latest YOUR-DOCKERHUB-USERNAME/sam3d-objects:latest
 # Push (~25GB upload)
 docker push YOUR-DOCKERHUB-USERNAME/sam3d-objects:latest
 ```
+
+---
+
+---
+
+## Step 2.5: Manual Setup on RunPod (Without Docker)
+
+If you're setting up manually on a RunPod (not using Docker), follow these steps:
+
+### 2.5.1 Install System Dependencies
+
+```bash
+sudo apt-get update
+sudo apt-get install -y wget curl git build-essential ca-certificates \
+    libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev
+```
+
+### 2.5.2 Install Miniconda
+
+```bash
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
+bash /tmp/miniconda.sh -b -p $HOME/miniconda3
+rm /tmp/miniconda.sh
+export PATH=$HOME/miniconda3/bin:$PATH
+echo 'export PATH=$HOME/miniconda3/bin:$PATH' >> ~/.bashrc
+```
+
+### 2.5.3 Create Conda Environment
+
+```bash
+cd sam-3d-objects  # or wherever you cloned the repo
+
+# Configure conda (exact same as Docker)
+conda config --set remote_read_timeout_secs 600
+conda config --set remote_connect_timeout_secs 120
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
+# Create environment
+conda env create -f environments/default.yml
+conda clean -ya
+```
+
+### 2.5.4 Install Python Dependencies
+
+```bash
+# CRITICAL: Source conda.sh first (exact same as Docker)
+# Find your conda installation path
+CONDA_PATH=$(conda info --base)
+echo "Conda path: $CONDA_PATH"
+
+# Source conda.sh to enable conda activate
+source $CONDA_PATH/etc/profile.d/conda.sh
+
+# Activate environment (exact same as Docker)
+conda activate sam3d-objects
+
+# Verify you're using the right pip (should show conda env path)
+which pip
+# Should show: $CONDA_PATH/envs/sam3d-objects/bin/pip (e.g., /root/miniconda3/envs/sam3d-objects/bin/pip)
+
+# Set environment variables (exact same as Docker)
+export PIP_EXTRA_INDEX_URL="https://pypi.ngc.nvidia.com https://download.pytorch.org/whl/cu121"
+export PIP_FIND_LINKS="https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.5.1_cu121.html"
+export TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
+export CUDA_HOME=/usr/local/cuda
+export LIDRA_SKIP_INIT=true
+export CPATH=${CUDA_HOME}/include:${CPATH}
+
+# Install HuggingFace CLI (exact same order as Docker)
+pip install --no-cache-dir 'huggingface-hub[cli]<1.0'
+
+# IMPORTANT: Install PyTorch FIRST (auto-gptq needs it to build)
+# This fixes the "No module named 'torch'" error on RunPod
+pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu121 torch==2.5.1+cu121 torchaudio==2.5.1+cu121
+
+# Verify PyTorch is installed
+python -c "import torch; print(f'PyTorch {torch.__version__} installed successfully')"
+
+# Install main package with dev and p3d extras (Docker does these together)
+pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu121 -e '.[dev]'
+pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu121 -e '.[p3d]'
+
+# Install inference extras (Docker does this separately)
+pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu121 -e '.[inference]'
+
+# Install numpy 1.26.4 FIRST (kaolin requires numpy<2.0)
+# This prevents rembg from upgrading to numpy 2.x
+pip install --no-cache-dir "numpy==1.26.4"
+
+# Install API dependencies + rembg (exact same as Docker)
+# Note: rembg may show numpy conflict warnings, but numpy 1.26.4 will work
+pip install --no-cache-dir flask flask-cors requests gunicorn rembg
+
+# Reinstall numpy 1.26.4 to ensure kaolin compatibility (exact same as Docker)
+pip install --no-cache-dir "numpy==1.26.4" --force-reinstall
+
+# Install nvdiffrast (needs CUDA headers, exact same as Docker)
+pip install --no-cache-dir git+https://github.com/NVlabs/nvdiffrast.git
+
+# Apply hydra patch AFTER all dependencies are installed (hydra needs to be installed first)
+if [ -f patching/hydra ]; then python patching/hydra; fi
+```
+
+### 2.5.5 Verify Checkpoints Location
+
+```bash
+# Check if checkpoints are in the right place
+ls -la checkpoints/
+# OR if they're in checkpoints/hf/
+ls -la checkpoints/hf/
+
+# Should see: pipeline.yaml, slat_generator.ckpt, ss_generator.ckpt, etc.
+```
+
+### 2.5.6 Run API Server
+
+**Run in background (Recommended - prevents crashes):**
+
+```bash
+# Make sure you're in the repo directory
+cd /workspace/sam-3d-objects
+
+# Source conda.sh and activate environment
+CONDA_PATH=$(conda info --base)
+source $CONDA_PATH/etc/profile.d/conda.sh
+conda activate sam3d-objects
+
+# Kill any existing gunicorn processes
+pkill -f gunicorn || true
+
+# Start in background with auto-restart (restarts worker after 10 requests to prevent memory leaks)
+nohup gunicorn --bind 0.0.0.0:8000 \
+    --workers 1 \
+    --threads 2 \
+    --timeout 300 \
+    --max-requests 10 \
+    --max-requests-jitter 5 \
+    --preload \
+    --log-level info \
+    --access-logfile /tmp/gunicorn_access.log \
+    --error-logfile /tmp/gunicorn_error.log \
+    api_server:app > /tmp/api_server.log 2>&1 &
+
+# Check it's running
+ps aux | grep gunicorn
+
+# Monitor logs
+tail -f /tmp/api_server.log
+```
+
+**Run in foreground (for testing):**
+
+```bash
+cd /workspace/sam-3d-objects
+CONDA_PATH=$(conda info --base)
+source $CONDA_PATH/etc/profile.d/conda.sh
+conda activate sam3d-objects
+
+# Set environment variables
+export CUDA_HOME=/usr/local/cuda
+export LIDRA_SKIP_INIT=true
+
+# Run the server
+gunicorn --bind 0.0.0.0:8000 --workers 1 --threads 2 --timeout 300 api_server:app
+```
+
+**Note:** The `--max-requests 10` flag restarts the worker after 10 jobs to prevent memory leaks. This is recommended to prevent crashes after multiple generations.
+
+**Status Tracking:**
+- ✅ Repository cloned
+- ✅ HuggingFace checkpoints downloaded
+- ⏳ Conda environment created
+- ⏳ Python dependencies installed
+- ⏳ API server running
 
 ---
 
@@ -323,6 +546,55 @@ Your GPU doesn't have enough VRAM. Options:
 
 Rebuild Docker image - nvdiffrast wasn't installed properly.
 
+### "CondaError: Run 'conda init' before 'conda activate'"
+
+**Solution:** Source conda.sh first (exact same as Docker):
+```bash
+# Find conda path and source it
+CONDA_PATH=$(conda info --base)
+source $CONDA_PATH/etc/profile.d/conda.sh
+conda activate sam3d-objects
+```
+
+### "Building cuda extension requires PyTorch (>=1.13.0) being installed, please install PyTorch first: No module named 'torch'"
+
+**RunPod only**: This happens when `auto-gptq` tries to build before PyTorch is installed, OR when the conda environment isn't activated.
+
+**Solution:**
+1. **Make sure conda environment is activated:**
+   ```bash
+   # Source conda.sh first
+   CONDA_PATH=$(conda info --base)
+   source $CONDA_PATH/etc/profile.d/conda.sh
+   conda activate sam3d-objects
+   which pip  # Should show conda env path, not system Python
+   ```
+
+2. **Install PyTorch first (see Step 2.5.4):**
+   ```bash
+   pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu121 torch==2.5.1+cu121 torchaudio==2.5.1+cu121
+   python -c "import torch; print('PyTorch OK')"  # Verify it works
+   ```
+
+3. **Then install package dependencies:**
+   ```bash
+   pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu121 -e '.[dev]'
+   ```
+
+**If you see `/root/miniconda3/lib/` in error messages**, you're using system Python instead of the conda environment. Activate the conda environment first!
+
+### "ERROR: pip's dependency resolver... numpy... incompatible"
+
+**Expected warnings**: You may see numpy version conflict warnings when installing `rembg`. This is normal:
+- `rembg` pulls `opencv-python-headless` which wants `numpy>=2.0`
+- `kaolin` requires `numpy<2.0`
+- The final `numpy==1.26.4` installation fixes this for kaolin compatibility
+
+**Solution**: These warnings are safe to ignore. The final `numpy==1.26.4` installation ensures kaolin works correctly. If you see these warnings, the installation is still successful - just verify numpy version at the end:
+```bash
+python -c "import numpy; print(f'NumPy {numpy.__version__}')"  # Should show 1.26.4
+```
+
 ### Health check returns `model_loaded: false`
 
 Model is still loading. Wait 2-3 minutes after pod starts.
@@ -334,6 +606,29 @@ Normal - rembg auto-segments the image. If it's not installed, a center crop is 
 ### Connection refused
 
 Pod isn't ready yet. Check RunPod logs.
+
+### API Server Crashes After Job Completion
+
+**Problem:** Server crashes after completing a generation job.
+
+**Solution:** Use `--max-requests` flag to restart workers periodically:
+
+```bash
+# Kill old server
+pkill -f gunicorn
+
+# Restart with max-requests (restarts worker after 10 jobs to prevent memory leaks)
+nohup gunicorn --bind 0.0.0.0:8000 \
+    --workers 1 \
+    --threads 2 \
+    --timeout 300 \
+    --max-requests 10 \
+    --max-requests-jitter 5 \
+    --preload \
+    api_server:app > /tmp/api_server.log 2>&1 &
+```
+
+This automatically restarts the worker after 10 requests, preventing memory leaks and crashes.
 
 ---
 
