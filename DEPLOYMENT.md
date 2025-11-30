@@ -229,11 +229,20 @@ if [ -f patching/hydra ]; then python patching/hydra; fi
 
 ```bash
 # Check if checkpoints are in the right place
+# They should be in: /workspace/sam-3d-objects/checkpoints/
+cd /workspace/sam-3d-objects
+
 ls -la checkpoints/
 # OR if they're in checkpoints/hf/
 ls -la checkpoints/hf/
 
 # Should see: pipeline.yaml, slat_generator.ckpt, ss_generator.ckpt, etc.
+
+# If checkpoints are in /workspace/checkpoints/ (outside the repo), move them:
+if [ -d "/workspace/checkpoints" ] && [ ! -d "/workspace/sam-3d-objects/checkpoints" ]; then
+    mv /workspace/checkpoints /workspace/sam-3d-objects/checkpoints
+    echo "✅ Moved checkpoints to correct location"
+fi
 ```
 
 ### 2.5.6 Run API Server
@@ -462,6 +471,21 @@ curl https://YOUR-POD-ID-8000.proxy.runpod.net/job/abc12345
 curl https://YOUR-POD-ID-8000.proxy.runpod.net/job/abc12345/download --output cat.glb
 ```
 
+**Quick status check loop:**
+```bash
+# Check status every 10 seconds until completed
+while true; do
+  STATUS=$(curl -s https://YOUR-POD-ID-8000.proxy.runpod.net/job/abc12345 | grep -o '"status":"[^"]*"')
+  echo "$(date): $STATUS"
+  if echo "$STATUS" | grep -q "completed"; then
+    echo "Job completed! Downloading..."
+    curl https://YOUR-POD-ID-8000.proxy.runpod.net/job/abc12345/download --output model.glb
+    break
+  fi
+  sleep 10
+done
+```
+
 ### Sync Flow (Simple but may timeout)
 
 **GLB Mesh with Textures (Best Quality):**
@@ -607,6 +631,30 @@ Normal - rembg auto-segments the image. If it's not installed, a center crop is 
 
 Pod isn't ready yet. Check RunPod logs.
 
+### Job Stuck in Queue (processing: 0, queued: 1)
+
+**Problem:** Job is queued but not processing - worker thread may have crashed.
+
+**Solution:** Restart the server:
+```bash
+# On pod
+pkill -f gunicorn
+cd /workspace/sam-3d-objects
+CONDA_PATH=$(conda info --base)
+source $CONDA_PATH/etc/profile.d/conda.sh
+conda activate sam3d-objects
+
+nohup gunicorn --bind 0.0.0.0:8000 \
+    --workers 1 \
+    --threads 2 \
+    --timeout 300 \
+    --max-requests 10 \
+    --max-requests-jitter 5 \
+    api_server:app > /tmp/api_server.log 2>&1 &
+```
+
+The stuck job will be lost, but you can resubmit. The worker monitor thread will auto-restart the worker if it crashes again.
+
 ### API Server Crashes After Job Completion
 
 **Problem:** Server crashes after completing a generation job.
@@ -629,6 +677,8 @@ nohup gunicorn --bind 0.0.0.0:8000 \
 ```
 
 This automatically restarts the worker after 10 requests, preventing memory leaks and crashes.
+
+**Note:** Generated files are stored in `/tmp` and automatically cleaned up after 1 hour. Download your results promptly after job completion.
 
 ---
 
@@ -675,4 +725,13 @@ docker run --gpus all -p 8000:8000 \
 | Model Size | ~12GB checkpoints |
 | HuggingFace Model | `facebook/sam-3d-objects` |
 | API Endpoints | `/health`, `/generate`, `/generate/sync`, `/job/<id>`, `/queue` |
+| File Storage | `/tmp` (auto-cleaned after 1 hour) |
+| Processing Time | ~2-3 min (model load) + ~2-3 min per job |
+
+## File Storage & Cleanup
+
+- **Generated files** are stored in `/tmp` with random names (e.g., `/tmp/tmpXXXXXX.glb`)
+- **Auto-cleanup**: Files are automatically deleted 1 hour after job completion
+- **Download promptly**: Make sure to download your results within 1 hour
+- **Multiple downloads**: You can download the same job multiple times within the 1-hour window
 
