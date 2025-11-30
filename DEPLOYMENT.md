@@ -392,10 +392,12 @@ The API uses a queue to process **1 request at a time**. Other requests wait in 
 | `inference_steps` | int | `100` | **Diffusion steps** (25 = fast, 50 = high, 100 = ultra). More = better quality but slower. Default: 100 (maximum) |
 | `nviews` | int | `300` | **Texture baking views** (100 = default, 200 = high, 300 = ultra). More = better texture but slower. Default: 300 (maximum) |
 
-**Quality Settings:**
-- **Maximum Quality** (default): `texture_size=4096`, `simplify=0.0`, `inference_steps=100`, `nviews=300`
-- **High Quality** (faster): `texture_size=2048`, `simplify=0.0`, `inference_steps=50`, `nviews=200`
-- **Balanced**: `texture_size=2048`, `simplify=0.0`, `inference_steps=25`, `nviews=100`
+**Quality Presets:**
+- **Maximum Quality** ⭐ (default): `texture_size=4096`, `simplify=0.0`, `inference_steps=100`, `nviews=300` - Best quality, slowest (~5-10 min per job)
+- **High Quality** (faster): `texture_size=2048`, `simplify=0.0`, `inference_steps=50`, `nviews=200` - Good quality, faster (~3-5 min per job)
+- **Balanced** (fastest): `texture_size=2048`, `simplify=0.0`, `inference_steps=25`, `nviews=100` - Default quality, fastest (~2-3 min per job)
+
+**Note:** Defaults are set to **maximum quality**. You can omit quality parameters to automatically use maximum settings, or specify lower values for faster generation.
 
 *Either `image` or `image_url` is required.*
 

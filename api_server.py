@@ -221,9 +221,12 @@ def run_generation(job: Job):
             if "mesh" in output and "gaussian" in output:
                 from sam3d_objects.model.backbone.tdfy_dit.utils import postprocessing_utils
                 
-                # Set render quality parameters (hack to pass through to render_multiview)
-                postprocessing_utils.to_glb._render_resolution = min(texture_size, 2048)  # Max 2048 for rendering
+                # Set render quality parameters (pass through to render_multiview)
+                # Use texture_size for render resolution (capped at 2048 for performance)
+                render_resolution = min(texture_size, 2048)
+                postprocessing_utils.to_glb._render_resolution = render_resolution
                 postprocessing_utils.to_glb._render_nviews = nviews
+                logger.info(f"[{job.id}] Quality: texture_size={texture_size}, render_res={render_resolution}, nviews={nviews}, simplify={simplify}, inference_steps={inference_steps}")
                 
                 glb = postprocessing_utils.to_glb(
                     output["gaussian"][0],
