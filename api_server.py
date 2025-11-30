@@ -362,24 +362,46 @@ def worker():
             except:
                 pass
 
-# Start worker thread
-worker_thread = threading.Thread(target=worker, daemon=True)
-worker_thread.start()
+# Worker thread - started lazily to survive gunicorn fork
+worker_thread = None
+worker_started = False
+
+def ensure_worker_started():
+    """Start worker thread if not already started (called after gunicorn fork)"""
+    global worker_thread, worker_started
+    if worker_started:
+        return
+    worker_started = True
+    worker_thread = threading.Thread(target=worker, daemon=True)
+    worker_thread.start()
+    logger.info("Worker thread started (lazy init)")
+    # Also start the monitor
+    ensure_worker_monitor_started()
 
 def check_worker_thread():
     """Check if worker thread is alive, restart if dead"""
-    global worker_thread
+    global worker_thread, worker_started
     while True:
         time.sleep(30)  # Check every 30 seconds
-        if not worker_thread.is_alive():
-            logger.error("Worker thread died! Restarting...")
-            worker_thread = threading.Thread(target=worker, daemon=True)
-            worker_thread.start()
-            logger.info("Worker thread restarted")
+        if worker_started and worker_thread is not None:
+            if not worker_thread.is_alive():
+                logger.error("Worker thread died! Restarting...")
+                worker_thread = threading.Thread(target=worker, daemon=True)
+                worker_thread.start()
+                logger.info("Worker thread restarted")
 
-# Start worker monitor thread
-worker_monitor_thread = threading.Thread(target=check_worker_thread, daemon=True)
-worker_monitor_thread.start()
+# Worker monitor - also started lazily
+worker_monitor_thread = None
+worker_monitor_started = False
+
+def ensure_worker_monitor_started():
+    """Start worker monitor thread if not already started"""
+    global worker_monitor_thread, worker_monitor_started
+    if worker_monitor_started:
+        return
+    worker_monitor_started = True
+    worker_monitor_thread = threading.Thread(target=check_worker_thread, daemon=True)
+    worker_monitor_thread.start()
 
 # ============================================================================
 # API ENDPOINTS
@@ -401,7 +423,7 @@ def health():
                 gpu_info = {'name': 'Unknown', 'vram_gb': 0}
         
         worker_alive = False
-        if 'worker_thread' in globals():
+        if worker_thread is not None:
             try:
                 worker_alive = worker_thread.is_alive()
             except:
@@ -512,6 +534,9 @@ def generate():
     if 'image' not in data and 'image_url' not in data:
         return jsonify({'error': 'Need image or image_url'}), 400
     
+    # Ensure worker thread is running (must be after gunicorn fork)
+    ensure_worker_started()
+    
     # Check queue capacity
     stats = get_queue_stats()
     if stats['queued'] >= MAX_QUEUE_SIZE:
@@ -551,6 +576,9 @@ def generate_sync():
     
     if 'image' not in data and 'image_url' not in data:
         return jsonify({'error': 'Need image or image_url'}), 400
+    
+    # Ensure worker thread is running (must be after gunicorn fork)
+    ensure_worker_started()
     
     # Create and queue job
     job_id = str(uuid.uuid4())[:8]
