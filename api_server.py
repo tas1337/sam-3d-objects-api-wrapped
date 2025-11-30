@@ -265,6 +265,21 @@ def worker():
 worker_thread = threading.Thread(target=worker, daemon=True)
 worker_thread.start()
 
+def check_worker_thread():
+    """Check if worker thread is alive, restart if dead"""
+    global worker_thread
+    while True:
+        time.sleep(30)  # Check every 30 seconds
+        if not worker_thread.is_alive():
+            logger.error("Worker thread died! Restarting...")
+            worker_thread = threading.Thread(target=worker, daemon=True)
+            worker_thread.start()
+            logger.info("Worker thread restarted")
+
+# Start worker monitor thread
+worker_monitor_thread = threading.Thread(target=check_worker_thread, daemon=True)
+worker_monitor_thread.start()
+
 # ============================================================================
 # API ENDPOINTS
 # ============================================================================
@@ -283,7 +298,8 @@ def health():
         'model_loaded': inference is not None,
         'cuda': torch.cuda.is_available(),
         'gpu': gpu_info,
-        'queue': get_queue_stats()
+        'queue': get_queue_stats(),
+        'worker_alive': worker_thread.is_alive() if 'worker_thread' in globals() else False
     })
 
 @app.route('/queue', methods=['GET'])
