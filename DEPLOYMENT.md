@@ -387,6 +387,15 @@ The API uses a queue to process **1 request at a time**. Other requests wait in 
 | `seed` | int | 42 | Random seed |
 | `output_format` | string | `"glb"` | `"glb"` (mesh) or `"ply"` (gaussian splat) |
 | `with_texture` | bool | `true` | Bake textures (GLB only) |
+| `texture_size` | int | `4096` | **Texture resolution** (1024, 2048, 4096). Higher = better quality but slower. Default: 4096 (maximum) |
+| `simplify` | float | `0.0` | **Mesh simplification** (0.0 = no simplification/max detail, 0.95 = aggressive). Lower = more detail. Default: 0.0 (maximum detail) |
+| `inference_steps` | int | `100` | **Diffusion steps** (25 = fast, 50 = high, 100 = ultra). More = better quality but slower. Default: 100 (maximum) |
+| `nviews` | int | `300` | **Texture baking views** (100 = default, 200 = high, 300 = ultra). More = better texture but slower. Default: 300 (maximum) |
+
+**Quality Settings:**
+- **Maximum Quality** (default): `texture_size=4096`, `simplify=0.0`, `inference_steps=100`, `nviews=300`
+- **High Quality** (faster): `texture_size=2048`, `simplify=0.0`, `inference_steps=50`, `nviews=200`
+- **Balanced**: `texture_size=2048`, `simplify=0.0`, `inference_steps=25`, `nviews=100`
 
 *Either `image` or `image_url` is required.*
 
@@ -454,7 +463,14 @@ curl -X POST https://YOUR-POD-ID-8000.proxy.runpod.net/generate/sync \
 
 ### Async Flow (Recommended)
 
-**1. Submit job:**
+**1. Submit job (Maximum Quality - Default):**
+```bash
+curl -X POST https://YOUR-POD-ID-8000.proxy.runpod.net/generate \
+  -H "Content-Type: application/json" \
+  -d '{"image_url": "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=512", "output_format": "glb", "with_texture": true, "texture_size": 4096, "simplify": 0.0, "inference_steps": 100, "nviews": 300}'
+```
+
+**Or use defaults (already maximum quality):**
 ```bash
 curl -X POST https://YOUR-POD-ID-8000.proxy.runpod.net/generate \
   -H "Content-Type: application/json" \
@@ -488,11 +504,19 @@ done
 
 ### Sync Flow (Simple but may timeout)
 
-**GLB Mesh with Textures (Best Quality):**
+**GLB Mesh with Textures (Maximum Quality - Default):**
 ```bash
 curl -X POST https://YOUR-POD-ID-8000.proxy.runpod.net/generate/sync \
   -H "Content-Type: application/json" \
-  -d '{"image_url": "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=512", "output_format": "glb", "with_texture": true}' \
+  -d '{"image_url": "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=512", "output_format": "glb", "with_texture": true, "texture_size": 4096, "simplify": 0.0, "inference_steps": 100, "nviews": 300}' \
+  --output cat.glb
+```
+
+**GLB Mesh with Textures (High Quality - Faster):**
+```bash
+curl -X POST https://YOUR-POD-ID-8000.proxy.runpod.net/generate/sync \
+  -H "Content-Type: application/json" \
+  -d '{"image_url": "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=512", "output_format": "glb", "with_texture": true, "texture_size": 2048, "simplify": 0.0, "inference_steps": 50, "nviews": 200}' \
   --output cat.glb
 ```
 

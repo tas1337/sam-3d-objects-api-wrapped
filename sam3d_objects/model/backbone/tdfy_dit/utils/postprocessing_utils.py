@@ -635,8 +635,11 @@ def to_glb(
         logger.info("Baking texture ...")
 
         # bake texture
+        # Use higher resolution and more views for better quality
+        render_resolution = getattr(to_glb, '_render_resolution', 1024)
+        render_nviews = getattr(to_glb, '_render_nviews', 100)
         observations, extrinsics, intrinsics = render_multiview(
-            app_rep, resolution=1024, nviews=100
+            app_rep, resolution=render_resolution, nviews=render_nviews
         )
         masks = [np.any(observation > 0, axis=-1) for observation in observations]
         extrinsics = [extrinsics[i].cpu().numpy() for i in range(len(extrinsics))]

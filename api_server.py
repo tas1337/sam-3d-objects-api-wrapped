@@ -174,8 +174,14 @@ def run_generation(job: Job):
         output_format = data.get('output_format', 'glb')
         with_texture = data.get('with_texture', True)
         
+        # Quality parameters (defaults set to MAXIMUM quality)
+        texture_size = data.get('texture_size', 4096)  # Higher = better texture quality (1024, 2048, 4096). Default: 4096 (max)
+        simplify = data.get('simplify', 0.0)  # Lower = more mesh detail (0.0 = no simplification/max detail, 0.95 = aggressive). Default: 0.0 (max detail)
+        inference_steps = data.get('inference_steps', 100)  # More steps = better quality (25 = fast, 50 = high, 100 = ultra). Default: 100 (max)
+        nviews = data.get('nviews', 300)  # More views = better texture (100 = default, 200 = high, 300 = ultra). Default: 300 (max)
+        
         mask = img_array[:, :, 3] > 127
-        logger.info(f"[{job.id}] Running 3D generation, seed={seed}, pixels={mask.sum()}")
+        logger.info(f"[{job.id}] Running 3D generation, seed={seed}, pixels={mask.sum()}, quality: texture_size={texture_size}, simplify={simplify}, inference_steps={inference_steps}, nviews={nviews}")
         
         if output_format == 'ply':
             output = inference._pipeline.run(
@@ -196,14 +202,41 @@ def run_generation(job: Job):
             gs.save_ply(tmp.name)
             job.result = {'file': tmp.name, 'format': 'ply'}
         else:
+            # Split inference_steps for stage1 and stage2
+            stage1_steps = inference_steps
+            stage2_steps = inference_steps
+            
             output = inference._pipeline.run(
                 img_array, None, seed,
                 stage1_only=False,
                 with_mesh_postprocess=True,
                 with_texture_baking=with_texture,
                 with_layout_postprocess=True,
-                use_vertex_color=not with_texture
+                use_vertex_color=not with_texture,
+                stage1_inference_steps=stage1_steps,
+                stage2_inference_steps=stage2_steps
             )
+            
+            # Override postprocessing with quality parameters
+            if "mesh" in output and "gaussian" in output:
+                from sam3d_objects.model.backbone.tdfy_dit.utils import postprocessing_utils
+                
+                # Set render quality parameters (hack to pass through to render_multiview)
+                postprocessing_utils.to_glb._render_resolution = min(texture_size, 2048)  # Max 2048 for rendering
+                postprocessing_utils.to_glb._render_nviews = nviews
+                
+                glb = postprocessing_utils.to_glb(
+                    output["gaussian"][0],
+                    output["mesh"][0],
+                    simplify=simplify,
+                    texture_size=texture_size,
+                    verbose=True,
+                    with_mesh_postprocess=True,
+                    with_texture_baking=with_texture,
+                    use_vertex_color=not with_texture,
+                    rendering_engine=inference._pipeline.rendering_engine,
+                )
+                output["glb"] = glb
             
             glb = output.get("glb")
             if glb is None:
