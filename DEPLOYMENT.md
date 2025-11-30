@@ -261,13 +261,12 @@ conda activate sam3d-objects
 # Kill any existing gunicorn processes
 pkill -f gunicorn || true
 
-# Start in background with auto-restart (restarts worker after 10 requests to prevent memory leaks)
+# Start in background WITHOUT max-requests (prevents crashes during job processing)
+# The worker monitor thread handles worker crashes instead
 nohup gunicorn --bind 0.0.0.0:8000 \
     --workers 1 \
     --threads 2 \
-    --timeout 300 \
-    --max-requests 10 \
-    --max-requests-jitter 5 \
+    --timeout 600 \
     --preload \
     --log-level info \
     --access-logfile /tmp/gunicorn_access.log \
@@ -297,7 +296,7 @@ export LIDRA_SKIP_INIT=true
 gunicorn --bind 0.0.0.0:8000 --workers 1 --threads 2 --timeout 300 api_server:app
 ```
 
-**Note:** The `--max-requests 10` flag restarts the worker after 10 jobs to prevent memory leaks. This is recommended to prevent crashes after multiple generations.
+**Note:** We removed `--max-requests` because it causes crashes when Gunicorn restarts the worker while a background job is processing. The worker monitor thread handles worker crashes instead.
 
 **Status Tracking:**
 - ✅ Repository cloned
@@ -673,9 +672,8 @@ conda activate sam3d-objects
 nohup gunicorn --bind 0.0.0.0:8000 \
     --workers 1 \
     --threads 2 \
-    --timeout 300 \
-    --max-requests 10 \
-    --max-requests-jitter 5 \
+    --timeout 600 \
+    --preload \
     api_server:app > /tmp/api_server.log 2>&1 &
 ```
 
@@ -685,24 +683,22 @@ The stuck job will be lost, but you can resubmit. The worker monitor thread will
 
 **Problem:** Server crashes after completing a generation job.
 
-**Solution:** Use `--max-requests` flag to restart workers periodically:
+**Solution:** Remove `--max-requests` flag (it causes crashes during job processing):
 
 ```bash
 # Kill old server
 pkill -f gunicorn
 
-# Restart with max-requests (restarts worker after 10 jobs to prevent memory leaks)
+# Restart WITHOUT max-requests (prevents crashes when checking /queue during processing)
 nohup gunicorn --bind 0.0.0.0:8000 \
     --workers 1 \
     --threads 2 \
-    --timeout 300 \
-    --max-requests 10 \
-    --max-requests-jitter 5 \
+    --timeout 600 \
     --preload \
     api_server:app > /tmp/api_server.log 2>&1 &
 ```
 
-This automatically restarts the worker after 10 requests, preventing memory leaks and crashes.
+The worker monitor thread automatically restarts the worker if it crashes. The `--max-requests` flag was causing Gunicorn to restart the worker while background jobs were still processing, leading to crashes.
 
 **Note:** Generated files are stored in `/tmp` and automatically cleaned up after 1 hour. Download your results promptly after job completion.
 

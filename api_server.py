@@ -248,18 +248,50 @@ def run_generation(job: Job):
             if glb is None:
                 raise ValueError("No mesh generated")
             
+            # Export GLB file (this can be memory intensive)
             tmp = tempfile.NamedTemporaryFile(suffix='.glb', delete=False)
             tmp.close()  # Close file handle before exporting
-            glb.export(tmp.name)
+            try:
+                logger.info(f"[{job.id}] Exporting GLB file...")
+                glb.export(tmp.name)
+                logger.info(f"[{job.id}] GLB export completed: {tmp.name}")
+            except Exception as export_error:
+                logger.error(f"[{job.id}] GLB export failed: {export_error}", exc_info=True)
+                # Try to clean up
+                try:
+                    if os.path.exists(tmp.name):
+                        os.unlink(tmp.name)
+                except:
+                    pass
+                raise export_error
+            
             job.result = {'file': tmp.name, 'format': 'glb'}
         
+        # Mark as completed BEFORE cleanup to ensure status is saved
         job.status = 'completed'
         job.completed_at = time.time()
         logger.info(f"[{job.id}] Completed in {job.completed_at - job.started_at:.1f}s")
         
-        # Force garbage collection to free memory
+        # Clear large objects before garbage collection
+        try:
+            if 'glb' in locals():
+                del glb
+            if 'output' in locals():
+                del output
+            if 'img_array' in locals():
+                del img_array
+        except:
+            pass
+        
+        # Force garbage collection and CUDA cache clear
         import gc
+        import torch
         gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
+        logger.info(f"[{job.id}] Cleanup completed, result ready at {job.result.get('file', 'N/A')}")
         
     except Exception as e:
         job.status = 'failed'
@@ -267,9 +299,25 @@ def run_generation(job: Job):
         job.completed_at = time.time()
         logger.error(f"[{job.id}] Failed: {e}", exc_info=True)
         
-        # Force garbage collection even on error
+        # Force garbage collection and CUDA cleanup even on error
         import gc
+        import torch
+        try:
+            if 'glb' in locals():
+                del glb
+            if 'output' in locals():
+                del output
+            if 'img_array' in locals():
+                del img_array
+        except:
+            pass
         gc.collect()
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            except:
+                pass
 
 def worker():
     """Worker thread that processes jobs one at a time"""
@@ -372,7 +420,9 @@ def health():
 
 @app.route('/queue', methods=['GET'])
 def queue_status():
-    """Get queue status"""
+    """Get queue status - lightweight, doesn't trigger worker restart"""
+    # This endpoint is intentionally lightweight to avoid triggering
+    # Gunicorn's max-requests restart during job processing
     return jsonify(get_queue_stats())
 
 @app.route('/job/<job_id>', methods=['GET'])
