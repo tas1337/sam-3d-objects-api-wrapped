@@ -5,3 +5,15 @@ __pycache__/
 outputs/
 *.glb
 *.ply
+
+# Exclude notebooks data (not needed for API)
+notebook/images/
+notebook/gaussians/
+notebook/meshes/
+
+# Development files
+.venv/
+.env
+*.egg-info/
+dist/
+build/

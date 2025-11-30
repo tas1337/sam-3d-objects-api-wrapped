@@ -7,20 +7,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        - HF_TOKEN=${HF_TOKEN:-}
+      # NO build args needed - checkpoints mounted at runtime
     image: sam3d-objects:latest
     container_name: sam3d-api
     ports:
       - "8000:8000"
     environment:
       - CUDA_VISIBLE_DEVICES=0
-      - HF_TOKEN=${HF_TOKEN:-}
       - PORT=8000
       - HOST=0.0.0.0
+      # Only needed if checkpoints not mounted
+      - HF_TOKEN=${HF_TOKEN:-}
     volumes:
-      # Mount checkpoints to avoid re-downloading
-      - ./checkpoints:/workspace/sam-3d-objects/checkpoints:ro
       # Mount outputs for debugging
       - ./outputs:/tmp/sam3d_outputs
     deploy:
@@ -36,5 +34,5 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 120s
+      start_period: 180s  # Model loading takes ~2-3 min
 

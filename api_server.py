@@ -37,10 +37,21 @@ def init_model():
     logger.info("Loading SAM3D model...")
     from inference import Inference
     
-    config_path = "checkpoints/hf/pipeline.yaml"
-    if not Path(config_path).exists():
-        raise FileNotFoundError(f"Config not found: {config_path}")
+    # Check multiple possible checkpoint paths
+    possible_paths = [
+        "checkpoints/pipeline.yaml",
+        "checkpoints/hf/pipeline.yaml",
+    ]
+    config_path = None
+    for path in possible_paths:
+        if Path(path).exists():
+            config_path = path
+            break
     
+    if not config_path:
+        raise FileNotFoundError(f"Config not found! Tried: {possible_paths}")
+    
+    logger.info(f"Using config: {config_path}")
     inference = Inference(config_path, compile=False)
     logger.info("Model loaded!")
     return inference
@@ -104,21 +115,33 @@ def process_image(data: dict) -> np.ndarray:
 @app.route('/health', methods=['GET'])
 def health():
     import torch
+    gpu_info = {}
+    if torch.cuda.is_available():
+        gpu_info = {
+            'name': torch.cuda.get_device_name(0),
+            'vram_gb': round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 1)
+        }
     return jsonify({
         'status': 'healthy',
         'model_loaded': inference is not None,
-        'cuda': torch.cuda.is_available()
+        'cuda': torch.cuda.is_available(),
+        'gpu': gpu_info
     })
 
 @app.route('/generate', methods=['POST'])
 def generate():
     """
-    Upload image → Get 3D GLB file back
+    Upload image → Get 3D model back
     
-    Request: { "image": "base64...", "seed": 42 }
-    or:      { "image_url": "https://...", "seed": 42 }
+    Request: { "image_url": "https://...", "output_format": "ply" }
     
-    Response: GLB file download
+    output_format: "ply" = Gaussian splat (works on 16GB GPU)
+                   "glb" = Mesh (needs 24GB+ GPU)
+    
+    with_texture: true = textured mesh (needs 24GB+)
+                  false = vertex colors (needs 24GB+)
+    
+    Response: PLY or GLB file download
     """
     try:
         if inference is None:
@@ -131,28 +154,58 @@ def generate():
         mask = img_array[:, :, 3] > 127
         logger.info(f"Running 3D generation, seed={seed}, object pixels: {mask.sum()}")
         
-        output = inference._pipeline.run(
-            img_array, None, seed,
-            stage1_only=False,
-            with_mesh_postprocess=True,
-            with_texture_baking=True,
-            with_layout_postprocess=True,
-            use_vertex_color=False
-        )
+        # output_format: "glb" (mesh, needs 24GB+), "ply" (gaussian splat, works on 16GB)
+        output_format = data.get('output_format', 'glb')
+        with_texture = data.get('with_texture', True)
         
-        glb = output.get("glb")
-        if glb is None:
-            return jsonify({'error': 'No mesh generated'}), 500
-        
-        tmp = tempfile.NamedTemporaryFile(suffix='.glb', delete=False)
-        glb.export(tmp.name)
-        
-        return send_file(
-            tmp.name, 
-            as_attachment=True, 
-            download_name='model.glb', 
-            mimetype='model/gltf-binary'
-        )
+        if output_format == 'ply':
+            # Gaussian splat only - works on 16GB GPU
+            output = inference._pipeline.run(
+                img_array, None, seed,
+                stage1_only=False,
+                with_mesh_postprocess=False,
+                with_texture_baking=False,
+                with_layout_postprocess=True,
+                use_vertex_color=False
+            )
+            
+            gs = output.get("gs")
+            if gs is None:
+                return jsonify({'error': 'No gaussian splat generated'}), 500
+            
+            tmp = tempfile.NamedTemporaryFile(suffix='.ply', delete=False)
+            gs.save_ply(tmp.name)
+            
+            return send_file(
+                tmp.name,
+                as_attachment=True,
+                download_name='model.ply',
+                mimetype='application/octet-stream'
+            )
+        else:
+            # GLB mesh - needs 24GB+ VRAM
+            output = inference._pipeline.run(
+                img_array, None, seed,
+                stage1_only=False,
+                with_mesh_postprocess=True,
+                with_texture_baking=with_texture,
+                with_layout_postprocess=True,
+                use_vertex_color=not with_texture
+            )
+            
+            glb = output.get("glb")
+            if glb is None:
+                return jsonify({'error': 'No mesh generated'}), 500
+            
+            tmp = tempfile.NamedTemporaryFile(suffix='.glb', delete=False)
+            glb.export(tmp.name)
+            
+            return send_file(
+                tmp.name, 
+                as_attachment=True, 
+                download_name='model.glb', 
+                mimetype='model/gltf-binary'
+            )
         
     except Exception as e:
         logger.error(f"Error: {e}", exc_info=True)

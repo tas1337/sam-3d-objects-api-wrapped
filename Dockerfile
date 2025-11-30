@@ -21,11 +21,12 @@ ENV PATH=/opt/conda/bin:$PATH
 
 WORKDIR /workspace/sam-3d-objects
 
-# Copy ONLY environment files first (for caching)
+# ============================================================================
+# LAYER 1: Environment files (rarely change) - CACHED
+# ============================================================================
 COPY environments/ environments/
 COPY pyproject.toml requirements*.txt ./
 COPY patching/ patching/
-COPY setup.py* ./
 
 # Create conda env (cached if environment files unchanged)
 RUN conda config --set remote_read_timeout_secs 600 && \
@@ -39,9 +40,11 @@ ENV PIP_EXTRA_INDEX_URL="https://pypi.ngc.nvidia.com https://download.pytorch.or
 ENV PIP_FIND_LINKS="https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.5.1_cu121.html"
 ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
 
-# Copy source code for pip install
+# ============================================================================
+# LAYER 2: Source code for pip install - CACHED unless code changes
+# ============================================================================
 COPY sam3d_objects/ sam3d_objects/
-COPY notebook/ notebook/
+COPY notebook/inference.py notebook/mesh_alignment.py notebook/
 
 # Install dependencies (cached if requirements unchanged)
 RUN /opt/conda/envs/sam3d-objects/bin/pip install --no-cache-dir 'huggingface-hub[cli]<1.0' && \
@@ -55,13 +58,25 @@ RUN if [ -f patching/hydra ]; then /opt/conda/envs/sam3d-objects/bin/python patc
 # Install API dependencies + rembg for auto-segmentation
 RUN /opt/conda/envs/sam3d-objects/bin/pip install --no-cache-dir flask flask-cors requests gunicorn rembg
 
-# Copy remaining files (api_server.py, checkpoints, etc.) - changes here don't affect above layers
+# Install nvdiffrast for mesh rendering (needs CUDA headers)
+ENV CPATH=${CUDA_HOME}/include:${CPATH}
+RUN /opt/conda/envs/sam3d-objects/bin/pip install --no-cache-dir git+https://github.com/NVlabs/nvdiffrast.git
+
+# Fix numpy binary compatibility with kaolin
+RUN /opt/conda/envs/sam3d-objects/bin/pip install --no-cache-dir "numpy==1.26.4" --force-reinstall
+
+# ============================================================================
+# LAYER 3: Application files (frequently change) - NOT cached
+# ============================================================================
 COPY api_server.py demo.py ./
-COPY checkpoints/ checkpoints/
 COPY scripts/ scripts/
 COPY client/ client/
 COPY doc/ doc/
 
+# Copy checkpoints into image (12GB but self-contained)
+COPY checkpoints/ checkpoints/
+
+# Create startup script
 RUN echo '#!/bin/bash\n\
 set -e\n\
 source /opt/conda/etc/profile.d/conda.sh\n\
@@ -69,12 +84,30 @@ conda activate sam3d-objects\n\
 export CUDA_HOME=/usr/local/cuda\n\
 export LIDRA_SKIP_INIT=true\n\
 cd /workspace/sam-3d-objects\n\
-if [ ! -f "checkpoints/hf/pipeline.yaml" ] && [ ! -z "$HF_TOKEN" ]; then\n\
+\n\
+# Check for checkpoints (can be at /checkpoints or /workspace/sam-3d-objects/checkpoints)\n\
+CKPT_PATH=""\n\
+if [ -f "checkpoints/pipeline.yaml" ]; then\n\
+    CKPT_PATH="checkpoints/pipeline.yaml"\n\
+elif [ -f "checkpoints/hf/pipeline.yaml" ]; then\n\
+    CKPT_PATH="checkpoints/hf/pipeline.yaml"\n\
+elif [ ! -z "$HF_TOKEN" ]; then\n\
+    echo "📥 Downloading checkpoints from HuggingFace..."\n\
     huggingface-cli login --token $HF_TOKEN\n\
     huggingface-cli download --repo-type model --local-dir checkpoints/hf-download --max-workers 1 facebook/sam-3d-objects\n\
-    if [ -d "checkpoints/hf-download/checkpoints" ]; then mv checkpoints/hf-download/checkpoints checkpoints/hf; fi\n\
+    if [ -d "checkpoints/hf-download/checkpoints" ]; then\n\
+        mv checkpoints/hf-download/checkpoints/* checkpoints/\n\
+    fi\n\
     rm -rf checkpoints/hf-download\n\
+    CKPT_PATH="checkpoints/pipeline.yaml"\n\
+else\n\
+    echo "❌ No checkpoints found! Mount checkpoints volume or set HF_TOKEN"\n\
+    exit 1\n\
 fi\n\
+\n\
+echo "✅ Using checkpoints: $CKPT_PATH"\n\
+export CHECKPOINT_PATH=$CKPT_PATH\n\
+\n\
 gunicorn --bind 0.0.0.0:8000 --workers 1 --threads 2 --timeout 300 api_server:app\n\
 ' > /workspace/start.sh && chmod +x /workspace/start.sh
 
