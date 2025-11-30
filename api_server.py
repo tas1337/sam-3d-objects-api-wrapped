@@ -175,10 +175,10 @@ def run_generation(job: Job):
         with_texture = data.get('with_texture', True)
         
         # Quality parameters (defaults set to HIGH quality - stable)
-        texture_size = data.get('texture_size', 2048)  # Higher = better texture quality (1024, 2048, 4096). Default: 2048 (high quality, stable)
-        simplify = data.get('simplify', 0.4)  # Mesh simplification ratio (0.0 = no simplify but crashes, 0.3 = high detail, 0.4 = balanced detail, 0.5 = medium, 0.95 = aggressive). Default: 0.4 (balanced detail, stable)
+        texture_size = data.get('texture_size', 2048)  # Higher = better texture (1024, 2048, 4096). Default: 2048 (balanced quality vs memory)
+        simplify = data.get('simplify', 0.5)  # Mesh simplification (0.5 = max for xatlas stability ~150k faces, 0.7 = safer). xatlas crashes above ~150k faces. Default: 0.5
         inference_steps = data.get('inference_steps', 50)  # More steps = better quality (25 = fast, 50 = high, 100 = ultra). Default: 50 (high quality, stable)
-        nviews = data.get('nviews', 250)  # More views = better texture (100 = default, 200 = high, 250 = very high, 300 = ultra). Default: 250 (very high quality)
+        nviews = data.get('nviews', 200)  # More views = better texture (100 = default, 200 = high). Default: 200 (balanced quality vs memory)
         remove_invisible_faces = data.get('remove_invisible_faces', True)  # Remove faces not visible from any angle. False = keep all faces (more detail but larger file)
         fill_holes_resolution = data.get('fill_holes_resolution', 2048)  # Higher = better hole detection (1024, 2048, 4096). Default: 2048
         fill_holes_num_views = data.get('fill_holes_num_views', 2000)  # More views = better hole detection (1000, 2000, 3000). Default: 2000
@@ -227,6 +227,13 @@ def run_generation(job: Job):
                 raise ValueError("Pipeline did not produce mesh or gaussian output")
             
             from sam3d_objects.model.backbone.tdfy_dit.utils import postprocessing_utils
+            import torch
+            import gc
+            
+            # Clear GPU memory before texture baking (model uses ~40GB, need room for textures)
+            gc.collect()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
             
             logger.info(f"[{job.id}] Quality: texture_size={texture_size}, nviews={nviews}, simplify={simplify}, inference_steps={inference_steps}")
             
