@@ -1,12 +1,17 @@
 """
-SAM3D API Server - Simple: Upload image, get 3D GLB back
-Auto-segments the image to find the object
+SAM3D API Server - Queue-based processing
+Only processes 1 request at a time, others wait in queue
 """
 import os
 import sys
 import base64
 import tempfile
+import uuid
+import threading
+import time
 from pathlib import Path
+from queue import Queue
+from collections import OrderedDict
 
 os.environ["CUDA_HOME"] = os.environ.get("CUDA_HOME", "/usr/local/cuda")
 os.environ["LIDRA_SKIP_INIT"] = "true"
@@ -26,6 +31,57 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
+# ============================================================================
+# QUEUE SYSTEM
+# ============================================================================
+MAX_CONCURRENT = int(os.environ.get('MAX_CONCURRENT', 1))  # Process 1 at a time
+MAX_QUEUE_SIZE = int(os.environ.get('MAX_QUEUE_SIZE', 10))  # Max waiting jobs
+
+job_queue = Queue(maxsize=MAX_QUEUE_SIZE)
+jobs = OrderedDict()  # job_id -> job info
+jobs_lock = threading.Lock()
+current_job = None
+
+class Job:
+    def __init__(self, job_id, data):
+        self.id = job_id
+        self.data = data
+        self.status = 'queued'  # queued, processing, completed, failed
+        self.position = 0
+        self.result = None
+        self.error = None
+        self.created_at = time.time()
+        self.started_at = None
+        self.completed_at = None
+
+def get_queue_position(job_id):
+    """Get position in queue (0 = processing, 1 = next, etc.)"""
+    with jobs_lock:
+        if job_id not in jobs:
+            return -1
+        position = 0
+        for jid, job in jobs.items():
+            if job.status in ('queued', 'processing'):
+                if jid == job_id:
+                    return position
+                position += 1
+        return -1
+
+def get_queue_stats():
+    """Get queue statistics"""
+    with jobs_lock:
+        queued = sum(1 for j in jobs.values() if j.status == 'queued')
+        processing = sum(1 for j in jobs.values() if j.status == 'processing')
+        return {
+            'queued': queued,
+            'processing': processing,
+            'max_queue_size': MAX_QUEUE_SIZE,
+            'max_concurrent': MAX_CONCURRENT
+        }
+
+# ============================================================================
+# MODEL & PROCESSING
+# ============================================================================
 inference = None
 rembg_session = None
 
@@ -37,7 +93,6 @@ def init_model():
     logger.info("Loading SAM3D model...")
     from inference import Inference
     
-    # Check multiple possible checkpoint paths
     possible_paths = [
         "checkpoints/pipeline.yaml",
         "checkpoints/hf/pipeline.yaml",
@@ -71,11 +126,7 @@ def init_rembg():
         return None
 
 def process_image(data: dict) -> np.ndarray:
-    """
-    Load image and auto-segment if needed.
-    Returns RGBA numpy array with proper alpha mask.
-    """
-    # Load image
+    """Load image and auto-segment if needed."""
     if 'image' in data:
         img_data = base64.b64decode(data['image'])
         image = Image.open(io.BytesIO(img_data))
@@ -86,14 +137,12 @@ def process_image(data: dict) -> np.ndarray:
     else:
         raise ValueError('Need image or image_url')
     
-    # Check if already has alpha with actual transparency
     if image.mode == 'RGBA':
         alpha = np.array(image)[:, :, 3]
         if alpha.min() < 250:
             logger.info("Image has alpha channel, using as mask")
             return np.array(image)
     
-    # Auto-segment with rembg
     session = init_rembg()
     if session:
         from rembg import remove
@@ -102,7 +151,6 @@ def process_image(data: dict) -> np.ndarray:
         logger.info("Segmentation done")
         return np.array(image)
     
-    # Fallback: center mask
     logger.info("Using center mask (rembg not available)")
     image = image.convert('RGBA')
     img_array = np.array(image)
@@ -111,6 +159,101 @@ def process_image(data: dict) -> np.ndarray:
     mask[int(h*0.1):int(h*0.9), int(w*0.1):int(w*0.9)] = 255
     img_array[:, :, 3] = mask
     return img_array
+
+def run_generation(job: Job):
+    """Run the actual 3D generation"""
+    global current_job
+    
+    try:
+        if inference is None:
+            init_model()
+        
+        data = job.data
+        img_array = process_image(data)
+        seed = data.get('seed', 42)
+        output_format = data.get('output_format', 'glb')
+        with_texture = data.get('with_texture', True)
+        
+        mask = img_array[:, :, 3] > 127
+        logger.info(f"[{job.id}] Running 3D generation, seed={seed}, pixels={mask.sum()}")
+        
+        if output_format == 'ply':
+            output = inference._pipeline.run(
+                img_array, None, seed,
+                stage1_only=False,
+                with_mesh_postprocess=False,
+                with_texture_baking=False,
+                with_layout_postprocess=True,
+                use_vertex_color=False
+            )
+            
+            gs = output.get("gs")
+            if gs is None:
+                raise ValueError("No gaussian splat generated")
+            
+            tmp = tempfile.NamedTemporaryFile(suffix='.ply', delete=False)
+            gs.save_ply(tmp.name)
+            job.result = {'file': tmp.name, 'format': 'ply'}
+        else:
+            output = inference._pipeline.run(
+                img_array, None, seed,
+                stage1_only=False,
+                with_mesh_postprocess=True,
+                with_texture_baking=with_texture,
+                with_layout_postprocess=True,
+                use_vertex_color=not with_texture
+            )
+            
+            glb = output.get("glb")
+            if glb is None:
+                raise ValueError("No mesh generated")
+            
+            tmp = tempfile.NamedTemporaryFile(suffix='.glb', delete=False)
+            glb.export(tmp.name)
+            job.result = {'file': tmp.name, 'format': 'glb'}
+        
+        job.status = 'completed'
+        job.completed_at = time.time()
+        logger.info(f"[{job.id}] Completed in {job.completed_at - job.started_at:.1f}s")
+        
+    except Exception as e:
+        job.status = 'failed'
+        job.error = str(e)
+        job.completed_at = time.time()
+        logger.error(f"[{job.id}] Failed: {e}", exc_info=True)
+
+def worker():
+    """Worker thread that processes jobs one at a time"""
+    global current_job
+    logger.info("Queue worker started")
+    
+    while True:
+        job_id = job_queue.get()
+        
+        with jobs_lock:
+            if job_id not in jobs:
+                job_queue.task_done()
+                continue
+            job = jobs[job_id]
+            job.status = 'processing'
+            job.started_at = time.time()
+            current_job = job_id
+        
+        logger.info(f"[{job_id}] Processing started")
+        run_generation(job)
+        
+        with jobs_lock:
+            current_job = None
+        
+        job_queue.task_done()
+
+# Start worker thread
+worker_thread = threading.Thread(target=worker, daemon=True)
+worker_thread.start()
+
+# ============================================================================
+# API ENDPOINTS
+# ============================================================================
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -125,91 +268,193 @@ def health():
         'status': 'healthy',
         'model_loaded': inference is not None,
         'cuda': torch.cuda.is_available(),
-        'gpu': gpu_info
+        'gpu': gpu_info,
+        'queue': get_queue_stats()
     })
+
+@app.route('/queue', methods=['GET'])
+def queue_status():
+    """Get queue status"""
+    return jsonify(get_queue_stats())
+
+@app.route('/job/<job_id>', methods=['GET'])
+def job_status(job_id):
+    """Check status of a specific job"""
+    with jobs_lock:
+        if job_id not in jobs:
+            return jsonify({'error': 'Job not found'}), 404
+        
+        job = jobs[job_id]
+        position = get_queue_position(job_id)
+        
+        response = {
+            'job_id': job_id,
+            'status': job.status,
+            'position': position,
+            'queue_length': get_queue_stats()['queued']
+        }
+        
+        if job.status == 'completed':
+            response['download_url'] = f'/job/{job_id}/download'
+            response['processing_time'] = round(job.completed_at - job.started_at, 1)
+        elif job.status == 'failed':
+            response['error'] = job.error
+        elif job.status == 'processing':
+            response['message'] = 'Your job is being processed now'
+        elif job.status == 'queued':
+            response['message'] = f'Waiting in queue, position {position}'
+        
+        return jsonify(response)
+
+@app.route('/job/<job_id>/download', methods=['GET'])
+def job_download(job_id):
+    """Download completed job result"""
+    with jobs_lock:
+        if job_id not in jobs:
+            return jsonify({'error': 'Job not found'}), 404
+        
+        job = jobs[job_id]
+        
+        if job.status != 'completed':
+            return jsonify({'error': f'Job not ready, status: {job.status}'}), 400
+        
+        result = job.result
+    
+    if result['format'] == 'ply':
+        return send_file(
+            result['file'],
+            as_attachment=True,
+            download_name='model.ply',
+            mimetype='application/octet-stream'
+        )
+    else:
+        return send_file(
+            result['file'],
+            as_attachment=True,
+            download_name='model.glb',
+            mimetype='model/gltf-binary'
+        )
 
 @app.route('/generate', methods=['POST'])
 def generate():
     """
-    Upload image → Get 3D model back
+    Submit a job to the queue
     
-    Request: { "image_url": "https://...", "output_format": "ply" }
+    Request: { "image_url": "https://...", "output_format": "glb", "with_texture": true }
     
-    output_format: "ply" = Gaussian splat (works on 16GB GPU)
-                   "glb" = Mesh (needs 24GB+ GPU)
-    
-    with_texture: true = textured mesh (needs 24GB+)
-                  false = vertex colors (needs 24GB+)
-    
-    Response: PLY or GLB file download
+    Response: { "job_id": "abc123", "position": 3, "status_url": "/job/abc123" }
     """
-    try:
-        if inference is None:
-            init_model()
-        
-        data = request.get_json()
-        img_array = process_image(data)
-        seed = data.get('seed', 42)
-        
-        mask = img_array[:, :, 3] > 127
-        logger.info(f"Running 3D generation, seed={seed}, object pixels: {mask.sum()}")
-        
-        # output_format: "glb" (mesh, needs 24GB+), "ply" (gaussian splat, works on 16GB)
-        output_format = data.get('output_format', 'glb')
-        with_texture = data.get('with_texture', True)
-        
-        if output_format == 'ply':
-            # Gaussian splat only - works on 16GB GPU
-            output = inference._pipeline.run(
-                img_array, None, seed,
-                stage1_only=False,
-                with_mesh_postprocess=False,
-                with_texture_baking=False,
-                with_layout_postprocess=True,
-                use_vertex_color=False
-            )
-            
-            gs = output.get("gs")
-            if gs is None:
-                return jsonify({'error': 'No gaussian splat generated'}), 500
-            
-            tmp = tempfile.NamedTemporaryFile(suffix='.ply', delete=False)
-            gs.save_ply(tmp.name)
-            
-            return send_file(
-                tmp.name,
-                as_attachment=True,
-                download_name='model.ply',
-                mimetype='application/octet-stream'
-            )
-        else:
-            # GLB mesh - needs 24GB+ VRAM
-            output = inference._pipeline.run(
-                img_array, None, seed,
-                stage1_only=False,
-                with_mesh_postprocess=True,
-                with_texture_baking=with_texture,
-                with_layout_postprocess=True,
-                use_vertex_color=not with_texture
-            )
-            
-            glb = output.get("glb")
-            if glb is None:
-                return jsonify({'error': 'No mesh generated'}), 500
-            
-            tmp = tempfile.NamedTemporaryFile(suffix='.glb', delete=False)
-            glb.export(tmp.name)
-            
-            return send_file(
-                tmp.name, 
-                as_attachment=True, 
-                download_name='model.glb', 
-                mimetype='model/gltf-binary'
-            )
-        
-    except Exception as e:
-        logger.error(f"Error: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+    data = request.get_json()
+    
+    # Validate input
+    if 'image' not in data and 'image_url' not in data:
+        return jsonify({'error': 'Need image or image_url'}), 400
+    
+    # Check queue capacity
+    stats = get_queue_stats()
+    if stats['queued'] >= MAX_QUEUE_SIZE:
+        return jsonify({
+            'error': 'Queue full, try again later',
+            'queue_length': stats['queued'],
+            'max_queue_size': MAX_QUEUE_SIZE
+        }), 503
+    
+    # Create job
+    job_id = str(uuid.uuid4())[:8]
+    job = Job(job_id, data)
+    
+    with jobs_lock:
+        jobs[job_id] = job
+    
+    job_queue.put(job_id)
+    position = get_queue_position(job_id)
+    
+    logger.info(f"[{job_id}] Job queued at position {position}")
+    
+    return jsonify({
+        'job_id': job_id,
+        'status': 'queued',
+        'position': position,
+        'status_url': f'/job/{job_id}',
+        'message': f'Job queued at position {position}. Poll status_url for updates.'
+    })
+
+@app.route('/generate/sync', methods=['POST'])
+def generate_sync():
+    """
+    Synchronous generation - waits for result (may timeout for long queues)
+    Same as old /generate behavior
+    """
+    data = request.get_json()
+    
+    if 'image' not in data and 'image_url' not in data:
+        return jsonify({'error': 'Need image or image_url'}), 400
+    
+    # Create and queue job
+    job_id = str(uuid.uuid4())[:8]
+    job = Job(job_id, data)
+    
+    with jobs_lock:
+        jobs[job_id] = job
+    
+    job_queue.put(job_id)
+    logger.info(f"[{job_id}] Sync job queued")
+    
+    # Wait for completion (with timeout)
+    timeout = 600  # 10 minutes
+    start = time.time()
+    while time.time() - start < timeout:
+        with jobs_lock:
+            if job.status == 'completed':
+                result = job.result
+                break
+            elif job.status == 'failed':
+                return jsonify({'error': job.error}), 500
+        time.sleep(1)
+    else:
+        return jsonify({'error': 'Timeout waiting for job'}), 504
+    
+    # Return file
+    if result['format'] == 'ply':
+        return send_file(
+            result['file'],
+            as_attachment=True,
+            download_name='model.ply',
+            mimetype='application/octet-stream'
+        )
+    else:
+        return send_file(
+            result['file'],
+            as_attachment=True,
+            download_name='model.glb',
+            mimetype='model/gltf-binary'
+        )
+
+# Cleanup old jobs periodically
+def cleanup_old_jobs():
+    """Remove jobs older than 1 hour"""
+    while True:
+        time.sleep(300)  # Every 5 minutes
+        cutoff = time.time() - 3600  # 1 hour
+        with jobs_lock:
+            to_remove = [jid for jid, job in jobs.items() 
+                        if job.completed_at and job.completed_at < cutoff]
+            for jid in to_remove:
+                job = jobs.pop(jid)
+                # Clean up temp file
+                if job.result and 'file' in job.result:
+                    try:
+                        os.unlink(job.result['file'])
+                    except:
+                        pass
+                logger.info(f"[{jid}] Cleaned up old job")
+
+cleanup_thread = threading.Thread(target=cleanup_old_jobs, daemon=True)
+cleanup_thread.start()
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 if __name__ == '__main__':
     try:
@@ -224,4 +469,5 @@ if __name__ == '__main__':
     
     port = int(os.environ.get('PORT', 8000))
     logger.info(f"Starting on port {port}")
+    logger.info(f"Queue settings: max_concurrent={MAX_CONCURRENT}, max_queue_size={MAX_QUEUE_SIZE}")
     app.run(host='0.0.0.0', port=port, threaded=True)
