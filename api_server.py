@@ -174,11 +174,14 @@ def run_generation(job: Job):
         output_format = data.get('output_format', 'glb')
         with_texture = data.get('with_texture', True)
         
-        # Quality parameters (defaults set to MAXIMUM quality)
-        texture_size = data.get('texture_size', 4096)  # Higher = better texture quality (1024, 2048, 4096). Default: 4096 (max)
+        # Quality parameters (defaults set to HIGH quality - stable)
+        texture_size = data.get('texture_size', 2048)  # Higher = better texture quality (1024, 2048, 4096). Default: 2048 (high quality, stable)
         simplify = data.get('simplify', 0.0)  # Lower = more mesh detail (0.0 = no simplification/max detail, 0.95 = aggressive). Default: 0.0 (max detail)
-        inference_steps = data.get('inference_steps', 100)  # More steps = better quality (25 = fast, 50 = high, 100 = ultra). Default: 100 (max)
-        nviews = data.get('nviews', 300)  # More views = better texture (100 = default, 200 = high, 300 = ultra). Default: 300 (max)
+        inference_steps = data.get('inference_steps', 50)  # More steps = better quality (25 = fast, 50 = high, 100 = ultra). Default: 50 (high quality, stable)
+        nviews = data.get('nviews', 200)  # More views = better texture (100 = default, 200 = high, 300 = ultra). Default: 200 (high quality, stable)
+        remove_invisible_faces = data.get('remove_invisible_faces', True)  # Remove faces not visible from any angle. False = keep all faces (more detail but larger file)
+        fill_holes_resolution = data.get('fill_holes_resolution', 2048)  # Higher = better hole detection (1024, 2048, 4096). Default: 2048
+        fill_holes_num_views = data.get('fill_holes_num_views', 2000)  # More views = better hole detection (1000, 2000, 3000). Default: 2000
         
         mask = img_array[:, :, 3] > 127
         logger.info(f"[{job.id}] Running 3D generation, seed={seed}, pixels={mask.sum()}, quality: texture_size={texture_size}, simplify={simplify}, inference_steps={inference_steps}, nviews={nviews}")

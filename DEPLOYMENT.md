@@ -387,17 +387,17 @@ The API uses a queue to process **1 request at a time**. Other requests wait in 
 | `seed` | int | 42 | Random seed |
 | `output_format` | string | `"glb"` | `"glb"` (mesh) or `"ply"` (gaussian splat) |
 | `with_texture` | bool | `true` | Bake textures (GLB only) |
-| `texture_size` | int | `4096` | **Texture resolution** (1024, 2048, 4096). Higher = better quality but slower. Default: 4096 (maximum) |
+| `texture_size` | int | `2048` | **Texture resolution** (1024, 2048, 4096). Higher = better quality but slower. Default: 2048 (high quality, stable) |
 | `simplify` | float | `0.0` | **Mesh simplification** (0.0 = no simplification/max detail, 0.95 = aggressive). Lower = more detail. Default: 0.0 (maximum detail) |
-| `inference_steps` | int | `100` | **Diffusion steps** (25 = fast, 50 = high, 100 = ultra). More = better quality but slower. Default: 100 (maximum) |
-| `nviews` | int | `300` | **Texture baking views** (100 = default, 200 = high, 300 = ultra). More = better texture but slower. Default: 300 (maximum) |
+| `inference_steps` | int | `50` | **Diffusion steps** (25 = fast, 50 = high, 100 = ultra). More = better quality but slower. Default: 50 (high quality, stable) |
+| `nviews` | int | `200` | **Texture baking views** (100 = default, 200 = high, 300 = ultra). More = better texture but slower. Default: 200 (high quality, stable) |
 
 **Quality Presets:**
-- **Maximum Quality** ⭐ (default): `texture_size=4096`, `simplify=0.0`, `inference_steps=100`, `nviews=300` - Best quality, slowest (~5-10 min per job)
-- **High Quality** (faster): `texture_size=2048`, `simplify=0.0`, `inference_steps=50`, `nviews=200` - Good quality, faster (~3-5 min per job)
-- **Balanced** (fastest): `texture_size=2048`, `simplify=0.0`, `inference_steps=25`, `nviews=100` - Default quality, fastest (~2-3 min per job)
+- **High Quality** ⭐ (default): `texture_size=2048`, `simplify=0.0`, `inference_steps=50`, `nviews=200` - High quality, stable (~3-5 min per job)
+- **Maximum Quality** (may crash on some GPUs): `texture_size=4096`, `simplify=0.0`, `inference_steps=100`, `nviews=300` - Best quality, slowest, memory intensive (~5-10 min per job)
+- **Balanced** (faster): `texture_size=2048`, `simplify=0.0`, `inference_steps=25`, `nviews=100` - Good quality, faster (~2-3 min per job)
 
-**Note:** Defaults are set to **maximum quality**. You can omit quality parameters to automatically use maximum settings, or specify lower values for faster generation.
+**Note:** Defaults are set to **high quality** for stability. For maximum quality, explicitly set `texture_size=4096`, `inference_steps=100`, `nviews=300` (may require more GPU memory).
 
 *Either `image` or `image_url` is required.*
 
