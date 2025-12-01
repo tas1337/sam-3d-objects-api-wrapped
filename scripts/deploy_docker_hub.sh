@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 echo "=========================================="
 echo "Docker Image Build & Push (Fully Automated)"
 echo "=========================================="
@@ -26,27 +28,30 @@ if ! command -v ssh &> /dev/null; then
     exit 1
 fi
 
-# Find SSH key
-SSH_KEY_PATH=""
-for keyfile in ~/.ssh/id_ed25519 ~/.ssh/id_rsa ~/.ssh/sampod; do
-    if [ -f "$keyfile" ] && [ -f "$keyfile.pub" ]; then
-        SSH_KEY_PATH="$keyfile"
-        break
-    fi
-done
+# Load .env if it exists
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    echo "Loading credentials from .env file..."
+    source "$SCRIPT_DIR/.env"
+    echo ""
+fi
+
+# Find SSH key (use SSH_KEY_PATH from .env if set)
+if [ -z "$SSH_KEY_PATH" ]; then
+    for keyfile in ~/.ssh/id_ed25519 ~/.ssh/id_rsa ~/.ssh/sampod; do
+        # Expand ~ for Windows
+        expanded_keyfile="${keyfile/#\~/$HOME}"
+        if [ -f "$expanded_keyfile" ] && [ -f "$expanded_keyfile.pub" ]; then
+            SSH_KEY_PATH="$expanded_keyfile"
+            break
+        fi
+    done
+fi
 
 if [ -z "$SSH_KEY_PATH" ]; then
     read -p "SSH private key path (without .pub): " SSH_KEY_PATH
-else
-    echo "Found SSH key: $SSH_KEY_PATH"
-    read -p "Use this key? [Y/n]: " USE_KEY
-    if [ "$USE_KEY" = "n" ] || [ "$USE_KEY" = "N" ]; then
-        read -p "SSH private key path (without .pub): " SSH_KEY_PATH
-    fi
+    # Expand ~ manually for Windows compatibility
+    SSH_KEY_PATH="${SSH_KEY_PATH/#\~/$HOME}"
 fi
-
-# Expand ~ manually for Windows compatibility
-SSH_KEY_PATH="${SSH_KEY_PATH/#\~/$HOME}"
 
 if [ ! -f "$SSH_KEY_PATH" ]; then
     echo "ERROR: SSH private key not found at $SSH_KEY_PATH"
@@ -58,19 +63,38 @@ if [ ! -f "$SSH_KEY_PATH.pub" ]; then
     exit 1
 fi
 
+echo "Using SSH key: $SSH_KEY_PATH"
+
 SSH_PUBLIC_KEY=$(cat "$SSH_KEY_PATH.pub")
 SSH_PRIVATE_KEY="$SSH_KEY_PATH"
 echo ""
 
-# Collect credentials (all tokens hidden for privacy)
-read -p "Docker Hub Username: " DOCKER_USERNAME
-read -sp "Docker Hub Access Token: " DOCKER_TOKEN
-echo ""
-read -sp "GitHub Personal Access Token: " GITHUB_TOKEN
-echo ""
-read -sp "HuggingFace Token: " HF_TOKEN
-echo ""
-read -sp "DigitalOcean API Token: " DO_TOKEN
+# Collect credentials (skip if already set from .env)
+if [ -z "$DOCKER_USERNAME" ]; then
+    read -p "Docker Hub Username: " DOCKER_USERNAME
+fi
+if [ -z "$DOCKER_TOKEN" ]; then
+    read -sp "Docker Hub Access Token: " DOCKER_TOKEN
+    echo ""
+fi
+if [ -z "$GITHUB_TOKEN" ]; then
+    read -sp "GitHub Personal Access Token: " GITHUB_TOKEN
+    echo ""
+fi
+if [ -z "$HF_TOKEN" ]; then
+    read -sp "HuggingFace Token: " HF_TOKEN
+    echo ""
+fi
+if [ -z "$DO_TOKEN" ]; then
+    read -sp "DigitalOcean API Token: " DO_TOKEN
+    echo ""
+fi
+
+echo "Using credentials:"
+echo "  Docker Hub: $DOCKER_USERNAME"
+echo "  GitHub: ****${GITHUB_TOKEN: -4}"
+echo "  HuggingFace: ****${HF_TOKEN: -4}"
+echo "  DigitalOcean: ****${DO_TOKEN: -4}"
 echo ""
 
 # Ask which image(s) to build

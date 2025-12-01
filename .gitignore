@@ -64,3 +64,7 @@ logs/
 tmp/
 temp/
 *.tmp
+
+# Environment secrets
+scripts/.env
+.env
