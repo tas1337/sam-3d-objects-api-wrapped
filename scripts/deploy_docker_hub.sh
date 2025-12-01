@@ -168,7 +168,7 @@ BUILD_CHOICE="${BUILD_CHOICE}"
 if [ "\$BUILD_CHOICE" = "1" ] || [ "\$BUILD_CHOICE" = "3" ]; then
     echo ""
     echo "========== Building POD image =========="
-    docker build -t sam3d-objects:latest .
+    docker build --progress=plain -t sam3d-objects:latest .
     docker tag sam3d-objects:latest ${DOCKER_USERNAME}/sam3d-objects:latest
     docker push ${DOCKER_USERNAME}/sam3d-objects:latest
     echo "Pod image pushed: ${DOCKER_USERNAME}/sam3d-objects:latest"
@@ -177,7 +177,7 @@ fi
 if [ "\$BUILD_CHOICE" = "2" ] || [ "\$BUILD_CHOICE" = "3" ]; then
     echo ""
     echo "========== Building SERVERLESS image =========="
-    docker build -f Dockerfile.serverless -t sam3d-objects-serverless:latest .
+    docker build --progress=plain -f Dockerfile.serverless -t sam3d-objects-serverless:latest .
     docker tag sam3d-objects-serverless:latest ${DOCKER_USERNAME}/sam3d-objects-serverless:latest
     docker push ${DOCKER_USERNAME}/sam3d-objects-serverless:latest
     echo "Serverless image pushed: ${DOCKER_USERNAME}/sam3d-objects-serverless:latest"
