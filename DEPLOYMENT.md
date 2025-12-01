@@ -724,3 +724,107 @@ docker run --gpus all -p 8000:8000 \
 - **Download promptly**: Make sure to download your results within 1 hour
 - **Multiple downloads**: You can download the same job multiple times within the 1-hour window
 
+---
+
+## RunPod Serverless Deployment
+
+For pay-per-use pricing instead of always-on pods.
+
+### Build Serverless Image
+
+```bash
+# Build serverless-specific image
+docker build -f Dockerfile.serverless -t sam3d-objects-serverless:latest .
+
+# Push to Docker Hub
+docker tag sam3d-objects-serverless:latest YOUR-USERNAME/sam3d-objects-serverless:latest
+docker push YOUR-USERNAME/sam3d-objects-serverless:latest
+```
+
+### Create Serverless Endpoint
+
+1. Go to [RunPod Serverless](https://www.runpod.io/console/serverless)
+2. Click **New Endpoint**
+3. Configure:
+   - **Container Image**: `YOUR-USERNAME/sam3d-objects-serverless:latest`
+   - **GPU**: Select 80GB+ for best quality (A100 80GB recommended)
+   - **Min Workers**: 0 (scale to zero)
+   - **Max Workers**: 1-5 (based on expected load)
+   - **Idle Timeout**: 60 seconds
+   - **Flash Boot**: Enable if available
+
+### Serverless API Usage
+
+**Submit Job:**
+```bash
+curl -X POST https://api.runpod.ai/v2/YOUR-ENDPOINT-ID/run \
+  -H "Authorization: Bearer YOUR-RUNPOD-API-KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "image": "BASE64_ENCODED_IMAGE",
+      "output_format": "glb",
+      "with_texture": true,
+      "texture_size": 2048,
+      "simplify": 0.3,
+      "inference_steps": 50,
+      "nviews": 200
+    }
+  }'
+```
+
+**Response:**
+```json
+{
+  "id": "job-id",
+  "status": "IN_QUEUE"
+}
+```
+
+**Check Status:**
+```bash
+curl https://api.runpod.ai/v2/YOUR-ENDPOINT-ID/status/JOB-ID \
+  -H "Authorization: Bearer YOUR-RUNPOD-API-KEY"
+```
+
+**Completed Response:**
+```json
+{
+  "id": "job-id",
+  "status": "COMPLETED",
+  "output": {
+    "model": "BASE64_ENCODED_GLB",
+    "format": "glb",
+    "vertices": 12345,
+    "faces": 24690,
+    "processing_time": 45.2
+  }
+}
+```
+
+**Decode the model:**
+```bash
+# Save the base64 model to file
+echo "BASE64_OUTPUT" | base64 -d > model.glb
+```
+
+### Serverless vs Pod Comparison
+
+| Feature | Pod | Serverless |
+|---------|-----|------------|
+| Pricing | ~$1-2/hour (always on) | ~$0.03-0.05/job |
+| Cold Start | None | 2-3 min first request |
+| Best For | High volume, low latency | Low volume, cost savings |
+| Min Cost | $720+/month | $0 when idle |
+| API Format | REST (Flask) | RunPod handler |
+
+**Use Serverless if:**
+- < 500 jobs/month
+- Can tolerate 2-3 min cold starts
+- Want pay-per-use pricing
+
+**Use Pod if:**
+- High volume (500+ jobs/month)
+- Need instant response
+- Running 24/7 anyway
+
